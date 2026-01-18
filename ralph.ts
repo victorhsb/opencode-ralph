@@ -33,6 +33,7 @@ Arguments:
   prompt              Task description for the AI to work on
 
 Options:
+  --min-iterations N  Minimum iterations before completion allowed (default: 1)
   --max-iterations N  Maximum iterations before stopping (default: unlimited)
   --completion-promise TEXT  Phrase that signals completion (default: COMPLETE)
   --model MODEL       Model to use (e.g., anthropic/claude-sonnet)
@@ -274,6 +275,7 @@ function formatDurationLong(ms: number): string {
 
 // Parse options
 let prompt = "";
+let minIterations = 1; // default: 1 iteration minimum
 let maxIterations = 0; // 0 = unlimited
 let completionPromise = "COMPLETE";
 let model = "";
@@ -290,7 +292,14 @@ const promptParts: string[] = [];
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
 
-  if (arg === "--max-iterations") {
+  if (arg === "--min-iterations") {
+    const val = args[++i];
+    if (!val || isNaN(parseInt(val))) {
+      console.error("Error: --min-iterations requires a number");
+      process.exit(1);
+    }
+    minIterations = parseInt(val);
+  } else if (arg === "--max-iterations") {
     const val = args[++i];
     if (!val || isNaN(parseInt(val))) {
       console.error("Error: --max-iterations requires a number");
@@ -384,9 +393,16 @@ if (!prompt) {
   process.exit(1);
 }
 
+// Validate min/max iterations
+if (maxIterations > 0 && minIterations > maxIterations) {
+  console.error(`Error: --min-iterations (${minIterations}) cannot be greater than --max-iterations (${maxIterations})`);
+  process.exit(1);
+}
+
 interface RalphState {
   active: boolean;
   iteration: number;
+  minIterations: number;
   maxIterations: number;
   completionPromise: string;
   prompt: string;
@@ -544,7 +560,7 @@ ${state.prompt}
 - The loop will continue until you succeed
 - **IMPORTANT**: Update your todo list at the start of each iteration to show progress
 
-## Current Iteration: ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"}
+## Current Iteration: ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"} (min: ${state.minIterations ?? 1})
 
 Now, work on the task. Good luck!
 `.trim();
@@ -861,6 +877,7 @@ async function runRalphLoop(): Promise<void> {
   const state: RalphState = {
     active: true,
     iteration: 1,
+    minIterations,
     maxIterations,
     completionPromise,
     prompt,
@@ -886,6 +903,7 @@ async function runRalphLoop(): Promise<void> {
     console.log(`Task: ${promptPreview}`);
   }
   console.log(`Completion promise: ${completionPromise}`);
+  console.log(`Min iterations: ${minIterations}`);
   console.log(`Max iterations: ${maxIterations > 0 ? maxIterations : "unlimited"}`);
   if (model) console.log(`Model: ${model}`);
   if (disablePlugins) console.log("OpenCode plugins: non-auth plugins disabled");
@@ -934,7 +952,9 @@ async function runRalphLoop(): Promise<void> {
       break;
     }
 
-    console.log(`\n🔄 Iteration ${state.iteration}${maxIterations > 0 ? ` / ${maxIterations}` : ""}`);
+    const iterInfo = maxIterations > 0 ? ` / ${maxIterations}` : "";
+    const minInfo = minIterations > 1 && state.iteration < minIterations ? ` (min: ${minIterations})` : "";
+    console.log(`\n🔄 Iteration ${state.iteration}${iterInfo}${minInfo}`);
     console.log("─".repeat(68));
 
     // Capture context at start of iteration (to only clear what was consumed)
@@ -1092,15 +1112,21 @@ async function runRalphLoop(): Promise<void> {
 
       // Check for completion
       if (completionDetected) {
-        console.log(`\n╔══════════════════════════════════════════════════════════════════╗`);
-        console.log(`║  ✅ Completion promise detected: <promise>${completionPromise}</promise>`);
-        console.log(`║  Task completed in ${state.iteration} iteration(s)`);
-        console.log(`║  Total time: ${formatDurationLong(history.totalDurationMs)}`);
-        console.log(`╚══════════════════════════════════════════════════════════════════╝`);
-        clearState();
-        clearHistory();
-        clearContext();
-        break;
+        if (state.iteration < minIterations) {
+          // Completion detected but minimum iterations not reached
+          console.log(`\n⏳ Completion promise detected, but minimum iterations (${minIterations}) not yet reached.`);
+          console.log(`   Continuing to iteration ${state.iteration + 1}...`);
+        } else {
+          console.log(`\n╔══════════════════════════════════════════════════════════════════╗`);
+          console.log(`║  ✅ Completion promise detected: <promise>${completionPromise}</promise>`);
+          console.log(`║  Task completed in ${state.iteration} iteration(s)`);
+          console.log(`║  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+          console.log(`╚══════════════════════════════════════════════════════════════════╝`);
+          clearState();
+          clearHistory();
+          clearContext();
+          break;
+        }
       }
 
       // Clear context only if it was present at iteration start (preserve mid-iteration additions)
