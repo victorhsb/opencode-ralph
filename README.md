@@ -24,6 +24,11 @@
   <a href="#commands">Commands</a>
 </p>
 
+<p align="center">
+  <strong>Tired of agents breaking your local environment?</strong><br>
+  <a href="https://github.com/Th0rgal/openagent">OpenAgent</a> gives each task an isolated Linux workspace. Self-hosted. Git-backed.
+</p>
+
 ---
 
 ## What is Ralph?
