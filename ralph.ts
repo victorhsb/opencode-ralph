@@ -19,12 +19,12 @@ const contextPath = join(stateDir, "ralph-context.md");
 const historyPath = join(stateDir, "ralph-history.json");
 const tasksPath = join(stateDir, "ralph-tasks.md");
 
-const AGENT_TYPES = ["opencode", "claude-code", "codex"] as const;
+const AGENT_TYPES = ["opencode", "claude-code", "codex", "copilot"] as const;
 type AgentType = (typeof AGENT_TYPES)[number];
 
 type AgentEnvOptions = { filterPlugins?: boolean; allowAllPermissions?: boolean };
 
-type AgentBuildArgsOptions = { allowAllPermissions?: boolean };
+type AgentBuildArgsOptions = { allowAllPermissions?: boolean; extraFlags?: string[] };
 
 interface AgentConfig {
   type: AgentType;
@@ -38,11 +38,14 @@ interface AgentConfig {
 const AGENTS: Record<AgentType, AgentConfig> = {
   opencode: {
     type: "opencode",
-    command: "opencode",
-    buildArgs: (promptText, modelName, _options) => {
+    command: process.env.RALPH_OPENCODE_BINARY || "opencode",
+    buildArgs: (promptText, modelName, options) => {
       const cmdArgs = ["run"];
       if (modelName) {
         cmdArgs.push("-m", modelName);
+      }
+      if (options?.extraFlags && options.extraFlags.length > 0) {
+        cmdArgs.push(...options.extraFlags);
       }
       cmdArgs.push(promptText);
       return cmdArgs;
@@ -65,7 +68,7 @@ const AGENTS: Record<AgentType, AgentConfig> = {
   },
   "claude-code": {
     type: "claude-code",
-    command: "claude",
+    command: process.env.RALPH_CLAUDE_BINARY || "claude",
     buildArgs: (promptText, modelName, options) => {
       const cmdArgs = ["-p", promptText];
       if (modelName) {
@@ -73,6 +76,9 @@ const AGENTS: Record<AgentType, AgentConfig> = {
       }
       if (options?.allowAllPermissions) {
         cmdArgs.push("--dangerously-skip-permissions");
+      }
+      if (options?.extraFlags && options.extraFlags.length > 0) {
+        cmdArgs.push(...options.extraFlags);
       }
       return cmdArgs;
     },
@@ -85,7 +91,7 @@ const AGENTS: Record<AgentType, AgentConfig> = {
   },
   codex: {
     type: "codex",
-    command: "codex",
+    command: process.env.RALPH_CODEX_BINARY || "codex",
     buildArgs: (promptText, modelName, options) => {
       const cmdArgs = ["exec"];
       if (modelName) {
@@ -93,6 +99,9 @@ const AGENTS: Record<AgentType, AgentConfig> = {
       }
       if (options?.allowAllPermissions) {
         cmdArgs.push("--full-auto");
+      }
+      if (options?.extraFlags && options.extraFlags.length > 0) {
+        cmdArgs.push(...options.extraFlags);
       }
       cmdArgs.push(promptText);
       return cmdArgs;
@@ -103,6 +112,30 @@ const AGENTS: Record<AgentType, AgentConfig> = {
       return match ? match[1] : null;
     },
     configName: "Codex",
+  },
+  copilot: {
+    type: "copilot",
+    command: "copilot",
+    buildArgs: (promptText, modelName, options) => {
+      const cmdArgs = ["-p", promptText];
+      if (modelName) {
+        cmdArgs.push("--model", modelName);
+      }
+      if (options?.allowAllPermissions) {
+        cmdArgs.push("--allow-all", "--no-ask-user");
+      }
+      if (options?.extraFlags && options.extraFlags.length > 0) {
+        cmdArgs.push(...options.extraFlags);
+      }
+      return cmdArgs;
+    },
+    buildEnv: () => ({ ...process.env }),
+    // Provisional regex — needs empirical refinement based on actual Copilot CLI output format
+    parseToolOutput: line => {
+      const match = stripAnsi(line).match(/(?:Tool:|Using|Called|Running)\s+([A-Za-z0-9_-]+)/i);
+      return match ? match[1] : null;
+    },
+    configName: "Copilot CLI",
   },
 };
 // Parse arguments
@@ -120,7 +153,7 @@ Arguments:
   prompt              Task description for the AI to work on
 
 Options:
-  --agent AGENT       AI agent to use: opencode (default), claude-code, codex
+  --agent AGENT       AI agent to use: opencode (default), claude-code, codex, copilot
   --min-iterations N  Minimum iterations before completion allowed (default: 1)
   --max-iterations N  Maximum iterations before stopping (default: unlimited)
   --completion-promise TEXT  Phrase that signals completion (default: COMPLETE)
@@ -141,6 +174,7 @@ Options:
   --no-allow-all      Require interactive permission prompts
   --version, -v       Show version
   --help, -h          Show this help
+  --                  Pass all remaining arguments to the agent (e.g., -- --extra-tags)
 
 Commands:
   --status            Show current Ralph loop status and history
@@ -159,6 +193,7 @@ Examples:
   ralph --prompt-file ./prompt.md --max-iterations 5
   ralph --status                                        # Check loop status
   ralph --add-context "Focus on the auth module first"  # Add hint for next iteration
+  ralph "Build API" -- --agent build                    # Pass flags to the agent
 
 How it works:
   1. Sends your prompt to the selected AI agent
@@ -656,6 +691,15 @@ let verboseTools = false;
 let promptSource = "";
 
 const promptParts: string[] = [];
+let extraAgentFlags: string[] = [];
+const doubleDashIndex = args.indexOf("--");
+
+// Extract extra flags after --
+if (doubleDashIndex !== -1) {
+  extraAgentFlags = args.slice(doubleDashIndex + 1);
+  // Remove -- and everything after it from args processing
+  args.splice(doubleDashIndex);
+}
 
 function parseRotationInput(raw: string): string[] {
   const entries = raw.split(",").map(entry => entry.trim());
@@ -688,8 +732,8 @@ for (let i = 0; i < args.length; i++) {
 
   if (arg === "--agent") {
     const val = args[++i];
-    if (!val) {
-      console.error("Error: --agent requires: 'opencode', 'claude-code', or 'codex'");
+    if (!val || !AGENT_TYPES.includes(val as AgentType)) {
+      console.error("Error: --agent requires: 'opencode', 'claude-code', 'codex', or 'copilot'");
       process.exit(1);
     }
     agentType = val as AgentType;
@@ -1449,6 +1493,9 @@ async function runRalphLoop(): Promise<void> {
   if (disablePlugins && agentConfig.type === "codex") {
     console.warn("Warning: --no-plugins has no effect with Codex agent");
   }
+  if (disablePlugins && agentConfig.type === "copilot") {
+    console.warn("Warning: --no-plugins has no effect with Copilot CLI agent");
+  }
 
   console.log(`
 ╔══════════════════════════════════════════════════════════════════╗
@@ -1592,7 +1639,7 @@ async function runRalphLoop(): Promise<void> {
 
     try {
       // Build command arguments (permission flags are handled inside buildArgs)
-      const cmdArgs = agentConfig.buildArgs(fullPrompt, currentModel, { allowAllPermissions });
+      const cmdArgs = agentConfig.buildArgs(fullPrompt, currentModel, { allowAllPermissions, extraFlags: extraAgentFlags });
 
       const env = agentConfig.buildEnv({
         filterPlugins: disablePlugins,
