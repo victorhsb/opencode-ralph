@@ -10,7 +10,7 @@ import { $ } from "bun";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { join } from "path";
 
-const VERSION = "1.2.0";
+const VERSION = "1.2.1";
 
 // Detect Windows platform for command resolution
 const IS_WINDOWS = process.platform === "win32";
