@@ -74,7 +74,7 @@ $RECYCLE.BIN/
 
 context/
 node_modules/
-.ralph/ralph-loop.state.json
+.ralph/
 
 # Build artifacts
 bin/*
