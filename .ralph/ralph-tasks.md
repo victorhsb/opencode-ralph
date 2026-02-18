@@ -57,3 +57,4 @@
 - [x] **P4-T3: README Rewrite** - Rewrite header (v2.0.0 notice), prerequisites, installation, quick start, commands, and troubleshooting sections. Add migration guide showing command changes (before/after examples). Remove all agent-specific sections.
 
 - [ ] **P4-T4: Release Preparation** - Create CHANGELOG.md with v2.0.0 entry documenting breaking changes, removed flags, added SDK features. Create ARCHITECTURE.md (optional). Run comprehensive regression tests and verify all features work.
+- [ ] Create CHANGELOG.md with v2.0.0 release notes documenting all breaking changes (removed --agent, --rotation, --supervisor-agent, --use-subprocess flags; added SDK integration as default execution). Create ARCHITECTURE.md explaining the simplified SDK-based architecture. Run regression tests to verify core functionality works correctly.

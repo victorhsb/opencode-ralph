@@ -5,7 +5,7 @@
  * Handles session creation, event subscription, and tool tracking.
  */
 
-import type { OpenCodeClient } from "@opencode-ai/sdk";
+import type { OpencodeClient } from "@opencode-ai/sdk";
 
 export interface ExecutionResult {
   /** The text output from the execution */
@@ -22,7 +22,7 @@ export interface ExecutionResult {
 
 export interface ExecutionOptions {
   /** The OpenCode SDK client instance */
-  client: OpenCodeClient;
+  client: OpencodeClient;
   /** The prompt text to send */
   prompt: string;
   /** Optional model override */
@@ -67,9 +67,22 @@ export async function executePrompt(
 
   try {
     // Create fresh session
-    const session = await client.session.create({
+    const sessionResponse = await client.session.create({
       body: { title: `Ralph iteration ${Date.now()}` },
     });
+
+    if (sessionResponse.error || !sessionResponse.data) {
+      errors.push(`Failed to create session: ${sessionResponse.error ?? 'Unknown error'}`);
+      return {
+        output,
+        toolCounts,
+        errors,
+        success: false,
+        exitCode: 1,
+      };
+    }
+
+    const sessionId = sessionResponse.data.id;
 
     // Subscribe to events for real-time tracking
     const eventSubscription = await client.event.subscribe();
@@ -127,13 +140,26 @@ export async function executePrompt(
         }
       : undefined;
 
-    const result = await client.session.prompt({
-      path: { id: session.id },
+    const promptResponse = await client.session.prompt({
+      path: { id: sessionId },
       body: {
         model: modelConfig,
         parts: [{ type: "text" as const, text: prompt }],
       },
     });
+
+    if (promptResponse.error) {
+      errors.push(`Prompt failed: ${promptResponse.error}`);
+      return {
+        output,
+        toolCounts,
+        errors,
+        success: false,
+        exitCode: 1,
+      };
+    }
+
+    const result = promptResponse.data;
 
     // Wait for events to complete (with timeout)
     const timeoutPromise = new Promise<void>((_, reject) => {
@@ -317,8 +343,35 @@ function extractOutputFromMessage(
   const msg = message as Record<string, unknown>;
   const output: string[] = [];
 
-  // Extract from content array
-  if (Array.isArray(msg.content)) {
+  // Handle SDK response structure: { info: AssistantMessage, parts: Part[] }
+  if (Array.isArray(msg.parts)) {
+    for (const part of msg.parts) {
+      if (typeof part === "object" && part !== null) {
+        const partObj = part as Record<string, unknown>;
+
+        // Text content
+        if (partObj.type === "text" && typeof partObj.text === "string") {
+          output.push(partObj.text);
+        }
+
+        // Thinking content (optional - can be included for debugging)
+        if (
+          partObj.type === "thinking" &&
+          typeof partObj.thinking === "string"
+        ) {
+          output.push(`[Thinking: ${partObj.thinking}]`);
+        }
+
+        // Tool results (show summary)
+        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
+          output.push(`[Tool ${partObj.name} executed]`);
+        }
+      }
+    }
+  }
+
+  // Extract from content array (legacy format)
+  if (output.length === 0 && Array.isArray(msg.content)) {
     for (const part of msg.content) {
       if (typeof part === "object" && part !== null) {
         const partObj = part as Record<string, unknown>;

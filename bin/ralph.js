@@ -1,11 +1,1167 @@
 #!/usr/bin/env bun
 // @bun
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __moduleCache = /* @__PURE__ */ new WeakMap;
+var __toCommonJS = (from) => {
+  var entry = __moduleCache.get(from), desc;
+  if (entry)
+    return entry;
+  entry = __defProp({}, "__esModule", { value: true });
+  if (from && typeof from === "object" || typeof from === "function")
+    __getOwnPropNames(from).map((key) => !__hasOwnProp.call(entry, key) && __defProp(entry, key, {
+      get: () => from[key],
+      enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable
+    }));
+  __moduleCache.set(from, entry);
+  return entry;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, {
+      get: all[name],
+      enumerable: true,
+      configurable: true,
+      set: (newValue) => all[name] = () => newValue
+    });
+};
+var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 var __require = import.meta.require;
 
-// ralph.ts
-var {$ } = globalThis.Bun;
-import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync, mkdirSync, statSync } from "fs";
+// src/sdk/executor.ts
+var exports_executor = {};
+__export(exports_executor, {
+  executePrompt: () => executePrompt
+});
+async function executePrompt(options) {
+  const { client: client3, prompt, model, onEvent, signal } = options;
+  const toolCounts = new Map;
+  const errors = [];
+  let output = "";
+  try {
+    const sessionResponse = await client3.session.create({
+      body: { title: `Ralph iteration ${Date.now()}` }
+    });
+    if (sessionResponse.error || !sessionResponse.data) {
+      errors.push(`Failed to create session: ${sessionResponse.error ?? "Unknown error"}`);
+      return {
+        output,
+        toolCounts,
+        errors,
+        success: false,
+        exitCode: 1
+      };
+    }
+    const sessionId = sessionResponse.data.id;
+    const eventSubscription = await client3.event.subscribe();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    let sessionComplete = false;
+    const eventPromise = (async () => {
+      try {
+        for await (const event of eventSubscription.stream) {
+          if (signal?.aborted)
+            break;
+          const eventType = event?.type;
+          if (eventType === "session.idle" || eventType === "session.error") {
+            sessionComplete = true;
+          }
+          const sdkEvent = parseSdkEvent(event);
+          if (sdkEvent.type === "tool_start" && sdkEvent.toolName) {
+            toolCounts.set(sdkEvent.toolName, (toolCounts.get(sdkEvent.toolName) ?? 0) + 1);
+          }
+          if (sdkEvent.type === "text" && sdkEvent.content) {
+            output += sdkEvent.content;
+          }
+          onEvent?.(sdkEvent);
+          if (sessionComplete) {
+            break;
+          }
+        }
+      } catch (error) {
+        errors.push(`Event stream error: ${error}`);
+      }
+    })();
+    const modelConfig = model ? {
+      providerID: model.split("/")[0] || "openai",
+      modelID: model.split("/")[1] || model
+    } : undefined;
+    const promptResponse = await client3.session.prompt({
+      path: { id: sessionId },
+      body: {
+        model: modelConfig,
+        parts: [{ type: "text", text: prompt }]
+      }
+    });
+    if (promptResponse.error) {
+      errors.push(`Prompt failed: ${promptResponse.error}`);
+      return {
+        output,
+        toolCounts,
+        errors,
+        success: false,
+        exitCode: 1
+      };
+    }
+    const result = promptResponse.data;
+    const timeoutPromise = new Promise((_, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error("Event stream timeout"));
+      }, 30000);
+      signal?.addEventListener("abort", () => {
+        clearTimeout(timeoutId);
+        reject(new Error("Aborted"));
+      });
+    });
+    try {
+      await Promise.race([eventPromise, timeoutPromise]);
+    } catch (error) {
+      if (String(error).includes("Aborted")) {
+        throw error;
+      }
+    }
+    const finalOutput = extractOutputFromMessage(result);
+    return {
+      output: finalOutput || output,
+      toolCounts,
+      errors,
+      success: true,
+      exitCode: 0
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(errorMessage);
+    return {
+      output,
+      toolCounts,
+      errors,
+      success: false,
+      exitCode: 1
+    };
+  }
+}
+function parseSdkEvent(event) {
+  const timestamp = Date.now();
+  if (!event || typeof event !== "object") {
+    return {
+      type: "text",
+      content: "",
+      timestamp
+    };
+  }
+  const eventObj = event;
+  const eventType = typeof eventObj.type === "string" ? eventObj.type : "";
+  const props = eventObj.properties || {};
+  if (eventType === "message.part.delta") {
+    const delta = typeof props.delta === "string" ? props.delta : "";
+    const field = typeof props.field === "string" ? props.field : "";
+    if (field === "text" && delta) {
+      return {
+        type: "text",
+        content: delta,
+        timestamp
+      };
+    }
+    return {
+      type: "text",
+      content: "",
+      timestamp
+    };
+  }
+  if (eventType === "message.part.updated") {
+    const part = props.part || {};
+    const partType = typeof part.type === "string" ? part.type : "";
+    if (partType === "tool_use") {
+      const toolName = typeof part.name === "string" ? part.name : "unknown";
+      return {
+        type: "tool_start",
+        toolName,
+        timestamp
+      };
+    }
+    if (partType === "tool_result") {
+      const toolName = typeof part.name === "string" ? part.name : "unknown";
+      return {
+        type: "tool_end",
+        toolName,
+        timestamp
+      };
+    }
+    if (partType === "text") {
+      const text = typeof part.text === "string" ? part.text : "";
+      const role = typeof part.role === "string" ? part.role : "";
+      if (text && role === "assistant") {
+        return {
+          type: "text",
+          content: text,
+          timestamp
+        };
+      }
+    }
+    if (partType === "reasoning" || partType === "thinking") {
+      const text = typeof part.text === "string" ? part.text : "";
+      if (text) {
+        return {
+          type: "thinking",
+          content: text,
+          timestamp
+        };
+      }
+    }
+  }
+  if (eventType === "session.error") {
+    const error = props.error || {};
+    const errorMessage = typeof error.data?.message === "string" ? error.data.message : typeof error.message === "string" ? error.message : "Unknown error";
+    return {
+      type: "error",
+      content: errorMessage,
+      timestamp
+    };
+  }
+  return {
+    type: "text",
+    content: "",
+    timestamp
+  };
+}
+function extractOutputFromMessage(message) {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+  const msg = message;
+  const output = [];
+  if (Array.isArray(msg.parts)) {
+    for (const part of msg.parts) {
+      if (typeof part === "object" && part !== null) {
+        const partObj = part;
+        if (partObj.type === "text" && typeof partObj.text === "string") {
+          output.push(partObj.text);
+        }
+        if (partObj.type === "thinking" && typeof partObj.thinking === "string") {
+          output.push(`[Thinking: ${partObj.thinking}]`);
+        }
+        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
+          output.push(`[Tool ${partObj.name} executed]`);
+        }
+      }
+    }
+  }
+  if (output.length === 0 && Array.isArray(msg.content)) {
+    for (const part of msg.content) {
+      if (typeof part === "object" && part !== null) {
+        const partObj = part;
+        if (partObj.type === "text" && typeof partObj.text === "string") {
+          output.push(partObj.text);
+        }
+        if (partObj.type === "thinking" && typeof partObj.thinking === "string") {
+          output.push(`[Thinking: ${partObj.thinking}]`);
+        }
+        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
+          output.push(`[Tool ${partObj.name} executed]`);
+        }
+      }
+    }
+  }
+  if (output.length === 0 && typeof msg.text === "string") {
+    output.push(msg.text);
+  }
+  return output.join(`
+`);
+}
+
+// src/config/config.ts
+var exports_config = {};
+__export(exports_config, {
+  getTasksFilePath: () => getTasksFilePath,
+  getSupervisorSuggestionsFilePath: () => getSupervisorSuggestionsFilePath,
+  getSupervisorPollInterval: () => getSupervisorPollInterval,
+  getSupervisorMemoryFilePath: () => getSupervisorMemoryFilePath,
+  getStateFilePath: () => getStateFilePath,
+  getStateDir: () => getStateDir,
+  getHistoryFilePath: () => getHistoryFilePath,
+  getContextFilePath: () => getContextFilePath,
+  TOOL_SUMMARY_INTERVAL_MS: () => TOOL_SUMMARY_INTERVAL_MS,
+  TASKS_FILE: () => TASKS_FILE,
+  SUPERVISOR_TRUNCATION_CHARS: () => SUPERVISOR_TRUNCATION_CHARS,
+  SUPERVISOR_SUGGESTIONS_FILE: () => SUPERVISOR_SUGGESTIONS_FILE,
+  SUPERVISOR_MEMORY_SLICE: () => SUPERVISOR_MEMORY_SLICE,
+  SUPERVISOR_MEMORY_FILE: () => SUPERVISOR_MEMORY_FILE,
+  SUPERVISOR_DECISION_POLL_INTERVAL_MS: () => SUPERVISOR_DECISION_POLL_INTERVAL_MS,
+  STATE_FILE: () => STATE_FILE,
+  STATE_DIR_NAME: () => STATE_DIR_NAME,
+  SHORT_ITERATION_THRESHOLD_MS: () => SHORT_ITERATION_THRESHOLD_MS,
+  MAX_TOOLS_IN_SUMMARY: () => MAX_TOOLS_IN_SUMMARY,
+  MAX_ERRORS_TO_DISPLAY: () => MAX_ERRORS_TO_DISPLAY,
+  HISTORY_FILE: () => HISTORY_FILE,
+  HEARTBEAT_INTERVAL_MS: () => HEARTBEAT_INTERVAL_MS,
+  EVENT_SUBSCRIPTION_DELAY_MS: () => EVENT_SUBSCRIPTION_DELAY_MS,
+  EVENT_STREAM_TIMEOUT_MS: () => EVENT_STREAM_TIMEOUT_MS,
+  ERROR_ITERATIONS_DELAY_MS: () => ERROR_ITERATIONS_DELAY_MS,
+  DEFAULT_TASK_PROMISE: () => DEFAULT_TASK_PROMISE,
+  DEFAULT_SUPERVISOR_SUGGESTION_PROMISE: () => DEFAULT_SUPERVISOR_SUGGESTION_PROMISE,
+  DEFAULT_SUPERVISOR_NO_ACTION_PROMISE: () => DEFAULT_SUPERVISOR_NO_ACTION_PROMISE,
+  DEFAULT_SUPERVISOR_MEMORY_LIMIT: () => DEFAULT_SUPERVISOR_MEMORY_LIMIT,
+  DEFAULT_MAX_ITERATIONS: () => DEFAULT_MAX_ITERATIONS,
+  DEFAULT_ITERATIONS: () => DEFAULT_ITERATIONS,
+  DEFAULT_COMPLETION_PROMISE: () => DEFAULT_COMPLETION_PROMISE,
+  CONTEXT_FILE: () => CONTEXT_FILE,
+  BETWEEN_ITERATIONS_DELAY_MS: () => BETWEEN_ITERATIONS_DELAY_MS
+});
 import { join as join2 } from "path";
+function getConfig(envVar, defaultValue) {
+  if (envVar !== undefined) {
+    const value = parseInt(envVar, 10);
+    if (!isNaN(value)) {
+      return value;
+    }
+  }
+  return defaultValue;
+}
+function getSupervisorPollInterval() {
+  return getConfig(process.env.RALPH_SUPERVISOR_POLL_INTERVAL, SUPERVISOR_DECISION_POLL_INTERVAL_MS);
+}
+function getStateDir() {
+  return join2(process.cwd(), STATE_DIR_NAME);
+}
+function getStateFilePath() {
+  return join2(getStateDir(), STATE_FILE);
+}
+function getHistoryFilePath() {
+  return join2(getStateDir(), HISTORY_FILE);
+}
+function getContextFilePath() {
+  return join2(getStateDir(), CONTEXT_FILE);
+}
+function getTasksFilePath() {
+  return join2(getStateDir(), TASKS_FILE);
+}
+function getSupervisorMemoryFilePath() {
+  return join2(getStateDir(), SUPERVISOR_MEMORY_FILE);
+}
+function getSupervisorSuggestionsFilePath() {
+  return join2(getStateDir(), SUPERVISOR_SUGGESTIONS_FILE);
+}
+var STATE_DIR_NAME = ".ralph", STATE_FILE = "ralph-loop.state.json", HISTORY_FILE = "ralph-history.json", CONTEXT_FILE = "ralph-context.md", TASKS_FILE = "ralph-tasks.md", SUPERVISOR_MEMORY_FILE = "supervisor-memory.md", SUPERVISOR_SUGGESTIONS_FILE = "supervisor-suggestions.json", DEFAULT_ITERATIONS = 1, DEFAULT_MAX_ITERATIONS = 0, DEFAULT_COMPLETION_PROMISE = "COMPLETE", DEFAULT_TASK_PROMISE = "READY_FOR_NEXT_TASK", DEFAULT_SUPERVISOR_NO_ACTION_PROMISE = "NO_ACTION_NEEDED", DEFAULT_SUPERVISOR_SUGGESTION_PROMISE = "USER_DECISION_REQUIRED", DEFAULT_SUPERVISOR_MEMORY_LIMIT = 20, TOOL_SUMMARY_INTERVAL_MS = 3000, HEARTBEAT_INTERVAL_MS = 1e4, EVENT_STREAM_TIMEOUT_MS = 30000, EVENT_SUBSCRIPTION_DELAY_MS = 100, BETWEEN_ITERATIONS_DELAY_MS = 1000, ERROR_ITERATIONS_DELAY_MS = 2000, SHORT_ITERATION_THRESHOLD_MS = 30000, SUPERVISOR_DECISION_POLL_INTERVAL_MS = 2000, MAX_ERRORS_TO_DISPLAY = 10, MAX_TOOLS_IN_SUMMARY = 6, SUPERVISOR_TRUNCATION_CHARS = 6000, SUPERVISOR_MEMORY_SLICE = 10;
+var init_config = () => {};
+
+// src/state/state.ts
+var exports_state = {};
+__export(exports_state, {
+  saveState: () => saveState,
+  saveHistory: () => saveHistory,
+  loadState: () => loadState,
+  loadHistory: () => loadHistory,
+  ensureStateDir: () => ensureStateDir,
+  clearState: () => clearState,
+  clearHistory: () => clearHistory
+});
+import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync, mkdirSync } from "fs";
+function ensureStateDir() {
+  const dir = getStateDir();
+  if (!existsSync2(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+}
+function saveState(state) {
+  ensureStateDir();
+  writeFileSync(getStateFilePath(), JSON.stringify(state, null, 2));
+}
+function loadState() {
+  const path = getStateFilePath();
+  if (!existsSync2(path)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync2(path, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+function clearState() {
+  const path = getStateFilePath();
+  if (existsSync2(path)) {
+    try {
+      __require("fs").unlinkSync(path);
+    } catch {}
+  }
+}
+function loadHistory() {
+  const path = getHistoryFilePath();
+  if (!existsSync2(path)) {
+    return {
+      iterations: [],
+      totalDurationMs: 0,
+      struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
+    };
+  }
+  try {
+    return JSON.parse(readFileSync2(path, "utf-8"));
+  } catch {
+    return {
+      iterations: [],
+      totalDurationMs: 0,
+      struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
+    };
+  }
+}
+function saveHistory(history) {
+  ensureStateDir();
+  writeFileSync(getHistoryFilePath(), JSON.stringify(history, null, 2));
+}
+function clearHistory() {
+  const path = getHistoryFilePath();
+  if (existsSync2(path)) {
+    try {
+      __require("fs").unlinkSync(path);
+    } catch {}
+  }
+}
+var init_state = __esm(() => {
+  init_config();
+});
+
+// src/tasks/tasks.ts
+import { existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
+function getTasksPath() {
+  return getTasksFilePath();
+}
+function ensureTasksFile() {
+  const path = getTasksFilePath();
+  const dir = getStateDir();
+  if (!existsSync3(path)) {
+    if (!existsSync3(dir)) {
+      mkdirSync2(dir, { recursive: true });
+    }
+    writeFileSync2(path, `# Ralph Tasks
+
+Add your tasks below using: \`ralph --add-task "description"\`
+`);
+  }
+}
+function loadTasks() {
+  const path = getTasksFilePath();
+  if (!existsSync3(path))
+    return [];
+  try {
+    const content = readFileSync3(path, "utf-8");
+    return parseTasks(content);
+  } catch {
+    return [];
+  }
+}
+function parseTasks(content) {
+  const tasks = [];
+  const lines = content.split(`
+`);
+  let currentTask = null;
+  for (const line of lines) {
+    const topLevelMatch = line.match(/^- \[([ x\/])\]\s*(.+)/);
+    if (topLevelMatch) {
+      if (currentTask) {
+        tasks.push(currentTask);
+      }
+      const [, statusChar, text] = topLevelMatch;
+      let status = "todo";
+      if (statusChar === "x")
+        status = "complete";
+      else if (statusChar === "/")
+        status = "in-progress";
+      currentTask = { text, status, subtasks: [], originalLine: line };
+      continue;
+    }
+    const subtaskMatch = line.match(/^\s+- \[([ x\/])\]\s*(.+)/);
+    if (subtaskMatch && currentTask) {
+      const [, statusChar, text] = subtaskMatch;
+      let status = "todo";
+      if (statusChar === "x")
+        status = "complete";
+      else if (statusChar === "/")
+        status = "in-progress";
+      currentTask.subtasks.push({ text, status, subtasks: [], originalLine: line });
+    }
+  }
+  if (currentTask) {
+    tasks.push(currentTask);
+  }
+  return tasks;
+}
+function findCurrentTask(tasks) {
+  for (const task of tasks) {
+    if (task.status === "in-progress") {
+      return task;
+    }
+  }
+  return null;
+}
+function findNextTask(tasks) {
+  for (const task of tasks) {
+    if (task.status === "todo") {
+      return task;
+    }
+  }
+  return null;
+}
+function allTasksComplete(tasks) {
+  return tasks.length > 0 && tasks.every((t) => t.status === "complete");
+}
+function appendTask(taskDescription) {
+  const stateDirPath = getStateDir();
+  const tasksFilePath = getTasksFilePath();
+  if (!existsSync3(stateDirPath)) {
+    mkdirSync2(stateDirPath, { recursive: true });
+  }
+  let tasksContent = "";
+  if (existsSync3(tasksFilePath)) {
+    tasksContent = readFileSync3(tasksFilePath, "utf-8");
+  } else {
+    tasksContent = `# Ralph Tasks
+
+`;
+  }
+  const newTaskContent = tasksContent.trimEnd() + `
+` + `- [ ] ${taskDescription}
+`;
+  writeFileSync2(tasksFilePath, newTaskContent);
+}
+function removeTask(taskIndex) {
+  const tasksFilePath = getTasksFilePath();
+  if (!existsSync3(tasksFilePath)) {
+    throw new Error("No tasks file found");
+  }
+  const tasksContent = readFileSync3(tasksFilePath, "utf-8");
+  const tasks = parseTasks(tasksContent);
+  if (taskIndex < 1 || taskIndex > tasks.length) {
+    throw new Error(`Task index ${taskIndex} is out of range (1-${tasks.length})`);
+  }
+  const lines = tasksContent.split(`
+`);
+  const newLines = [];
+  let inRemovedTask = false;
+  let currentTaskLine = 0;
+  for (const line of lines) {
+    if (line.match(/^- \[/)) {
+      currentTaskLine++;
+      if (currentTaskLine === taskIndex) {
+        inRemovedTask = true;
+        continue;
+      } else {
+        inRemovedTask = false;
+      }
+    }
+    if (inRemovedTask && line.match(/^\s+/) && line.trim() !== "") {
+      continue;
+    }
+    newLines.push(line);
+  }
+  writeFileSync2(tasksFilePath, newLines.join(`
+`));
+}
+function displayTasksWithIndices(tasks) {
+  if (tasks.length === 0) {
+    console.log("No tasks found.");
+    return;
+  }
+  console.log("Current tasks:");
+  for (let i = 0;i < tasks.length; i++) {
+    const task = tasks[i];
+    const statusIcon = task.status === "complete" ? "\u2705" : task.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
+    console.log(`${i + 1}. ${statusIcon} ${task.text}`);
+    for (const subtask of task.subtasks) {
+      const subStatusIcon = subtask.status === "complete" ? "\u2705" : subtask.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
+      console.log(`   ${subStatusIcon} ${subtask.text}`);
+    }
+  }
+}
+function getTasksModeSection(state) {
+  const path = getTasksFilePath();
+  if (!existsSync3(path)) {
+    return `
+## TASKS MODE: Enabled (no tasks file found)
+
+Create .ralph/ralph-tasks.md with your task list, or use \`ralph --add-task "description"\` to add tasks.
+`;
+  }
+  try {
+    const tasksContent = readFileSync3(path, "utf-8");
+    const tasks = parseTasks(tasksContent);
+    const currentTask = findCurrentTask(tasks);
+    const nextTask = findNextTask(tasks);
+    let taskInstructions = "";
+    if (currentTask) {
+      taskInstructions = `
+\uD83D\uDD04 CURRENT TASK: "${currentTask.text}"
+   Focus on completing this specific task.
+   When done: Mark as [x] in .ralph/ralph-tasks.md and output <promise>${state.taskPromise}</promise>`;
+    } else if (nextTask) {
+      taskInstructions = `
+\uD83D\uDCCD NEXT TASK: "${nextTask.text}"
+   Mark as [/] in .ralph/ralph-tasks.md before starting.
+   When done: Mark as [x] and output <promise>${state.taskPromise}</promise>`;
+    } else if (allTasksComplete(tasks)) {
+      taskInstructions = `
+\u2705 ALL TASKS COMPLETE!
+   Output <promise>${state.completionPromise}</promise> to finish.`;
+    } else {
+      taskInstructions = `
+\uD83D\uDCCB No tasks found. Add tasks to .ralph/ralph-tasks.md or use \`ralph --add-task\``;
+    }
+    return `
+## TASKS MODE: Working through task list
+
+Current tasks from .ralph/ralph-tasks.md:
+\`\`\`markdown
+${tasksContent.trim()}
+\`\`\`
+${taskInstructions}
+
+### Task Workflow
+1. Find any task marked [/] (in progress). If none, pick the first [ ] task.
+2. Mark the task as [/] in ralph-tasks.md before starting.
+3. Complete the task.
+4. Mark as [x] when verified complete.
+5. Output <promise>${state.taskPromise}</promise> to move to the next task.
+6. Only output <promise>${state.completionPromise}</promise> when ALL tasks are [x].
+
+---
+`;
+  } catch {
+    return `
+## TASKS MODE: Error reading tasks file
+
+Unable to read .ralph/ralph-tasks.md
+`;
+  }
+}
+var init_tasks = __esm(() => {
+  init_config();
+});
+
+// src/context/context.ts
+var exports_context = {};
+__export(exports_context, {
+  loadContext: () => loadContext,
+  getContextPath: () => getContextPath,
+  clearContext: () => clearContext,
+  appendContext: () => appendContext
+});
+import { existsSync as existsSync4, readFileSync as readFileSync4, writeFileSync as writeFileSync3, mkdirSync as mkdirSync3 } from "fs";
+function getContextPath() {
+  return getContextFilePath();
+}
+function loadContext() {
+  const path = getContextFilePath();
+  if (!existsSync4(path)) {
+    return null;
+  }
+  try {
+    const content = readFileSync4(path, "utf-8").trim();
+    return content || null;
+  } catch {
+    return null;
+  }
+}
+function clearContext() {
+  const path = getContextFilePath();
+  if (existsSync4(path)) {
+    try {
+      __require("fs").unlinkSync(path);
+    } catch {}
+  }
+}
+function appendContext(contextText) {
+  const path = getContextFilePath();
+  const stateDirPath = getStateDir();
+  if (!existsSync4(stateDirPath)) {
+    mkdirSync3(stateDirPath, { recursive: true });
+  }
+  const timestamp = new Date().toISOString();
+  const newEntry = `
+## Context added at ${timestamp}
+${contextText}
+`;
+  if (existsSync4(path)) {
+    const existing = readFileSync4(path, "utf-8");
+    writeFileSync3(path, existing + newEntry);
+  } else {
+    writeFileSync3(path, `# Ralph Loop Context
+${newEntry}`);
+  }
+}
+var init_context = __esm(() => {
+  init_config();
+});
+
+// src/utils/utils.ts
+function formatDurationLong(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds % 3600 / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds % 3600 / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+function formatToolSummary(toolCounts, maxItems = 6) {
+  if (!toolCounts.size)
+    return "";
+  const entries = Array.from(toolCounts.entries()).sort((a, b) => b[1] - a[1]);
+  const shown = entries.slice(0, maxItems);
+  const remaining = entries.length - shown.length;
+  const parts = shown.map(([name, count]) => `${name} ${count}`);
+  if (remaining > 0) {
+    parts.push(`+${remaining} more`);
+  }
+  return parts.join(" \u2022 ");
+}
+function printIterationSummary(params) {
+  const toolSummary = formatToolSummary(params.toolCounts);
+  const duration = formatDuration(params.elapsedMs);
+  console.log(`Iteration ${params.iteration} completed in ${duration} (${params.model})`);
+  console.log(`
+Iteration Summary`);
+  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  console.log(`Iteration: ${params.iteration}`);
+  console.log(`Elapsed:   ${duration} (${params.model})`);
+  if (toolSummary) {
+    console.log(`Tools:     ${toolSummary}`);
+  } else {
+    console.log("Tools:     none");
+  }
+  console.log(`Exit code: ${params.exitCode}`);
+  console.log(`Completion promise: ${params.completionDetected ? "detected" : "not detected"}`);
+}
+function checkCompletion(output, promise) {
+  const escapedPromise = escapeRegex(promise);
+  const promisePattern = new RegExp(`<promise>\\s*${escapedPromise}\\s*</promise>`, "gi");
+  const matches = output.match(promisePattern);
+  if (!matches)
+    return false;
+  for (const match of matches) {
+    const matchIndex = output.indexOf(match);
+    const contextBefore = output.substring(Math.max(0, matchIndex - 100), matchIndex).toLowerCase();
+    const negationPatterns = [
+      /\bnot\s+(yet\s+)?(say|output|write|respond|print)/,
+      /\bdon'?t\s+(say|output|write|respond|print)/,
+      /\bwon'?t\s+(say|output|write|respond|print)/,
+      /\bwill\s+not\s+(say|output|write|respond|print)/,
+      /\bshould\s+not\s+(say|output|write|respond|print)/,
+      /\bwouldn'?t\s+(say|output|write|respond|print)/,
+      /\bavoid\s+(saying|outputting|writing)/,
+      /\bwithout\s+(saying|outputting|writing)/,
+      /\bbefore\s+(saying|outputting|I\s+say)/,
+      /\buntil\s+(I\s+)?(say|output|can\s+say)/
+    ];
+    const hasNegation = negationPatterns.some((pattern) => pattern.test(contextBefore));
+    if (hasNegation)
+      continue;
+    const quotesBefore = (contextBefore.match(/["'`]/g) || []).length;
+    if (quotesBefore % 2 === 1)
+      continue;
+    return true;
+  }
+  return false;
+}
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function extractErrors(output) {
+  const errors = [];
+  const lines = output.split(`
+`);
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    if (lower.includes("error:") || lower.includes("failed:") || lower.includes("exception:") || lower.includes("typeerror") || lower.includes("syntaxerror") || lower.includes("referenceerror") || lower.includes("test") && lower.includes("fail")) {
+      const cleaned = line.trim().substring(0, 200);
+      if (cleaned && !errors.includes(cleaned)) {
+        errors.push(cleaned);
+      }
+    }
+  }
+  return errors.slice(0, 10);
+}
+function detectPlaceholderPluginError(output) {
+  return output.includes("ralph-wiggum is not yet ready for use. This is a placeholder package.");
+}
+function detectSdkModelNotFoundError(output) {
+  const lowerOutput = output.toLowerCase();
+  return lowerOutput.includes("providermodelfound") || lowerOutput.includes("model not found") || lowerOutput.includes("provider returned error") || lowerOutput.includes("no model configured");
+}
+function detectSdkPlaceholderPluginError(output) {
+  return output.includes("ralph-wiggum is not yet ready for use");
+}
+
+// src/supervisor/supervisor.ts
+var exports_supervisor = {};
+__export(exports_supervisor, {
+  waitForSupervisorDecisionIfNeeded: () => waitForSupervisorDecisionIfNeeded,
+  truncateForPrompt: () => truncateForPrompt,
+  saveSupervisorSuggestions: () => saveSupervisorSuggestions,
+  saveSupervisorMemory: () => saveSupervisorMemory,
+  runSupervisorOnce: () => runSupervisorOnce,
+  parseSupervisorOutput: () => parseSupervisorOutput,
+  parseSupervisorMemory: () => parseSupervisorMemory,
+  loadSupervisorSuggestions: () => loadSupervisorSuggestions,
+  loadCustomSupervisorPromptTemplate: () => loadCustomSupervisorPromptTemplate,
+  displaySupervisorSuggestions: () => displaySupervisorSuggestions,
+  buildSupervisorSuggestionId: () => buildSupervisorSuggestionId,
+  buildSupervisorPrompt: () => buildSupervisorPrompt,
+  applyApprovedSuggestion: () => applyApprovedSuggestion,
+  appendSupervisorMemory: () => appendSupervisorMemory
+});
+import { existsSync as existsSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync4, mkdirSync as mkdirSync4 } from "fs";
+function loadSupervisorSuggestions(path) {
+  const filePath = path ?? getSupervisorSuggestionsFilePath();
+  if (!existsSync5(filePath)) {
+    return { suggestions: [] };
+  }
+  try {
+    const parsed = JSON.parse(readFileSync5(filePath, "utf-8"));
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.suggestions)) {
+      return { suggestions: [] };
+    }
+    const suggestions = parsed.suggestions.filter((item) => item && typeof item === "object");
+    return { suggestions };
+  } catch {
+    return { suggestions: [], parseError: `Could not parse suggestions file at ${filePath}` };
+  }
+}
+function saveSupervisorSuggestions(store, path) {
+  const dir = getStateDir();
+  const filePath = path ?? getSupervisorSuggestionsFilePath();
+  if (!existsSync5(dir)) {
+    mkdirSync4(dir, { recursive: true });
+  }
+  writeFileSync4(filePath, JSON.stringify(store, null, 2));
+}
+function parseSupervisorMemory(path) {
+  const filePath = path ?? getSupervisorMemoryFilePath();
+  if (!existsSync5(filePath))
+    return [];
+  const content = readFileSync5(filePath, "utf-8").trim();
+  if (!content)
+    return [];
+  const sections = content.split(/\n(?=## )/g);
+  const entries = [];
+  for (const section of sections) {
+    const lines = section.split(`
+`);
+    if (!lines[0]?.startsWith("## "))
+      continue;
+    const header = lines[0].replace(/^##\s+/, "").trim();
+    const headerMatch = header.match(/^(.+?)\s+\|\s+Iteration\s+(\d+)$/i);
+    if (!headerMatch)
+      continue;
+    const timestamp = headerMatch[1].trim();
+    const iteration = parseInt(headerMatch[2], 10);
+    const summaryLine = lines.find((line) => line.startsWith("- Summary: "));
+    const decisionLine = lines.find((line) => line.startsWith("- Decision: "));
+    if (!summaryLine || !decisionLine || Number.isNaN(iteration))
+      continue;
+    entries.push({
+      iteration,
+      summary: summaryLine.replace("- Summary: ", "").trim(),
+      decision: decisionLine.replace("- Decision: ", "").trim(),
+      timestamp
+    });
+  }
+  return entries;
+}
+function saveSupervisorMemory(entries, path) {
+  const dir = getStateDir();
+  const filePath = path ?? getSupervisorMemoryFilePath();
+  if (!existsSync5(dir)) {
+    mkdirSync4(dir, { recursive: true });
+  }
+  const content = [
+    "# Supervisor Memory",
+    "",
+    ...entries.flatMap((entry) => [
+      `## ${entry.timestamp} | Iteration ${entry.iteration}`,
+      `- Summary: ${entry.summary}`,
+      `- Decision: ${entry.decision}`,
+      ""
+    ])
+  ].join(`
+`).trimEnd() + `
+`;
+  writeFileSync4(filePath, content);
+}
+function appendSupervisorMemory(entry, memoryLimit, path) {
+  const filePath = path ?? getSupervisorMemoryFilePath();
+  const existing = parseSupervisorMemory(filePath);
+  const boundedLimit = Number.isFinite(memoryLimit) && memoryLimit > 0 ? Math.floor(memoryLimit) : 20;
+  const next = [...existing, entry].slice(-boundedLimit);
+  saveSupervisorMemory(next, filePath);
+}
+function buildSupervisorSuggestionId(iteration) {
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `sup-${iteration}-${Date.now()}-${rand}`;
+}
+function displaySupervisorSuggestions(store) {
+  if (store.suggestions.length === 0) {
+    console.log("No supervisor suggestions found.");
+    return;
+  }
+  console.log("Supervisor suggestions:");
+  for (const suggestion of store.suggestions) {
+    console.log(`- ${suggestion.id} [${suggestion.status}] iteration ${suggestion.iteration}`);
+    console.log(`  ${suggestion.kind}: ${suggestion.title}`);
+    if (suggestion.details) {
+      console.log(`  details: ${suggestion.details}`);
+    }
+  }
+}
+function applyApprovedSuggestion(suggestion) {
+  try {
+    if (suggestion.kind === "add_task") {
+      const taskText = suggestion.proposedChanges.task ?? suggestion.details;
+      if (!taskText?.trim()) {
+        return { ok: false, error: "missing task text in suggestion payload" };
+      }
+      appendTask(taskText.trim());
+      return { ok: true };
+    }
+    if (suggestion.kind === "add_context") {
+      const contextText = suggestion.proposedChanges.context ?? suggestion.details;
+      if (!contextText?.trim()) {
+        return { ok: false, error: "missing context text in suggestion payload" };
+      }
+      appendContext(contextText.trim());
+      return { ok: true };
+    }
+    return { ok: false, error: `unsupported suggestion kind: ${suggestion.kind}` };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+function truncateForPrompt(text, maxChars) {
+  if (text.length <= maxChars)
+    return text;
+  return `${text.slice(0, Math.max(0, maxChars - 20))}
+...[truncated]`;
+}
+function loadCustomSupervisorPromptTemplate(templatePath, state, coderOutput, history) {
+  if (!existsSync5(templatePath)) {
+    console.error(`Error: Supervisor prompt template not found: ${templatePath}`);
+    process.exit(1);
+  }
+  const context = loadContext() || "";
+  const tasksFilePath = (init_config(), __toCommonJS(exports_config)).getTasksFilePath();
+  const tasksContent = existsSync5(tasksFilePath) ? readFileSync5(tasksFilePath, "utf-8") : "";
+  const memoryEntries = parseSupervisorMemory().slice(-SUPERVISOR_MEMORY_SLICE);
+  const memoryText = memoryEntries.map((m) => `${m.timestamp} [iter ${m.iteration}] ${m.summary} (${m.decision})`).join(`
+`);
+  let template = readFileSync5(templatePath, "utf-8");
+  template = template.replace(/\{\{iteration\}\}/g, String(state.iteration)).replace(/\{\{prompt\}\}/g, state.prompt).replace(/\{\{coder_output\}\}/g, coderOutput).replace(/\{\{context\}\}/g, context).replace(/\{\{tasks\}\}/g, tasksContent).replace(/\{\{supervisor_memory\}\}/g, memoryText).replace(/\{\{no_progress_iterations\}\}/g, String(history.struggleIndicators.noProgressIterations)).replace(/\{\{short_iterations\}\}/g, String(history.struggleIndicators.shortIterations));
+  return template;
+}
+function buildSupervisorPrompt(state, supervisorConfig, coderOutput, history) {
+  if (supervisorConfig.promptTemplate) {
+    const template = loadCustomSupervisorPromptTemplate(supervisorConfig.promptTemplate, state, coderOutput, history);
+    if (template)
+      return template;
+  }
+  const context = loadContext() || "(none)";
+  const tasksFilePath = (init_config(), __toCommonJS(exports_config)).getTasksFilePath();
+  const tasksContent = existsSync5(tasksFilePath) ? readFileSync5(tasksFilePath, "utf-8") : "(no tasks file)";
+  const memoryEntries = parseSupervisorMemory().slice(-SUPERVISOR_MEMORY_SLICE);
+  const memoryText = memoryEntries.length > 0 ? memoryEntries.map((m) => `- ${m.timestamp} (iteration ${m.iteration}): ${m.summary} | ${m.decision}`).join(`
+`) : "- no prior supervisor memory";
+  const truncatedOutput = truncateForPrompt(coderOutput, SUPERVISOR_TRUNCATION_CHARS);
+  return `
+# Ralph Supervisor - Iteration ${state.iteration}
+
+You are supervising a coding agent loop. Review the latest coder execution and suggest improvements if needed.
+You must not modify files or take actions. You can only communicate recommendations to the user.
+
+## Supervisor Protocol (strict)
+
+If no action is needed, output exactly:
+<promise>${supervisorConfig.noActionPromise}</promise>
+
+If action is needed, output:
+<promise>${supervisorConfig.suggestionPromise}</promise>
+<supervisor_suggestion>{"kind":"add_task"|"add_context","title":"...","details":"...","proposedChanges":{"task":"..."} or {"context":"..."}}</supervisor_suggestion>
+
+Only allowed kinds: add_task, add_context.
+Return exactly one suggestion block when suggesting action.
+
+## User Prompt
+${state.prompt}
+
+## Current Context
+${context}
+
+## Current Tasks
+\`\`\`markdown
+${tasksContent}
+\`\`\`
+
+## Recent Supervisor Memory
+${memoryText}
+
+## Latest Coder Output
+\`\`\`
+${truncatedOutput}
+\`\`\`
+
+## Struggle Signals
+- no progress iterations: ${history.struggleIndicators.noProgressIterations}
+- short iterations: ${history.struggleIndicators.shortIterations}
+`.trim();
+}
+function parseSupervisorOutput(output, noActionPromise, suggestionPromise, iteration) {
+  const noActionDetected = checkCompletion(output, noActionPromise);
+  const suggestionDetected = checkCompletion(output, suggestionPromise);
+  if (noActionDetected && !suggestionDetected) {
+    return { ok: true, noAction: true, rawOutput: output };
+  }
+  if (!suggestionDetected) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: output,
+      error: "supervisor output missing required promise tag"
+    };
+  }
+  const match = output.match(/<supervisor_suggestion>\s*([\s\S]*?)\s*<\/supervisor_suggestion>/i);
+  if (!match) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: output,
+      error: "suggestion promise found, but missing <supervisor_suggestion> JSON block"
+    };
+  }
+  try {
+    const parsed = JSON.parse(match[1]);
+    const kind = parsed?.kind;
+    const title = typeof parsed?.title === "string" ? parsed.title.trim() : "";
+    const details = typeof parsed?.details === "string" ? parsed.details.trim() : "";
+    const proposedChanges = parsed?.proposedChanges && typeof parsed.proposedChanges === "object" ? parsed.proposedChanges : {};
+    if (kind !== "add_task" && kind !== "add_context") {
+      return { ok: false, noAction: false, rawOutput: output, error: `invalid suggestion kind: ${String(kind)}` };
+    }
+    if (!title) {
+      return { ok: false, noAction: false, rawOutput: output, error: "suggestion title is required" };
+    }
+    if (kind === "add_task" && !proposedChanges.task?.trim()) {
+      return { ok: false, noAction: false, rawOutput: output, error: "add_task suggestion requires proposedChanges.task" };
+    }
+    if (kind === "add_context" && !proposedChanges.context?.trim()) {
+      return { ok: false, noAction: false, rawOutput: output, error: "add_context suggestion requires proposedChanges.context" };
+    }
+    return {
+      ok: true,
+      noAction: false,
+      rawOutput: output,
+      suggestion: {
+        iteration,
+        kind,
+        title,
+        details,
+        proposedChanges
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: output,
+      error: `invalid supervisor suggestion JSON: ${String(error)}`
+    };
+  }
+}
+async function runSupervisorOnce(state, supervisorConfig, history, coderOutput, sdkClient) {
+  try {
+    const supervisorPrompt = buildSupervisorPrompt(state, supervisorConfig, coderOutput, history);
+    const { executePrompt: executePrompt2 } = __toCommonJS(exports_executor);
+    const result = await executePrompt2({
+      client: sdkClient.client,
+      prompt: supervisorPrompt,
+      model: supervisorConfig.model,
+      onEvent: (event) => {}
+    });
+    if (!result.success) {
+      return {
+        ok: false,
+        noAction: false,
+        rawOutput: result.output,
+        error: result.errors.join("; ") || "SDK execution failed"
+      };
+    }
+    return parseSupervisorOutput(result.output, supervisorConfig.noActionPromise, supervisorConfig.suggestionPromise, state.iteration);
+  } catch (error) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: "",
+      error: String(error)
+    };
+  }
+}
+async function waitForSupervisorDecisionIfNeeded(state, iteration) {
+  let printedHint = false;
+  while (true) {
+    const store = loadSupervisorSuggestions();
+    if (store.parseError) {
+      if (!printedHint) {
+        console.warn(`\u26A0\uFE0F  ${store.parseError}`);
+        console.warn("   Fix the file or reject pending suggestions once readable.");
+        printedHint = true;
+      }
+      await new Promise((r) => setTimeout(r, getSupervisorPollInterval()));
+      continue;
+    }
+    const pending = store.suggestions.filter((s) => s.iteration === iteration && s.status === "pending");
+    if (pending.length === 0) {
+      const approvedApplied = store.suggestions.filter((s) => s.iteration === iteration && (s.status === "approved" || s.status === "applied")).length;
+      const { saveState: saveState2, loadState: reloadState } = (init_state(), __toCommonJS(exports_state));
+      const reloadedState = reloadState();
+      if (reloadedState && reloadedState.supervisorState) {
+        reloadedState.supervisorState.pausedForDecision = false;
+        reloadedState.supervisorState.pauseIteration = undefined;
+        reloadedState.supervisorState.pauseReason = undefined;
+        saveState2(reloadedState);
+      }
+      return { approvedAppliedCount: approvedApplied };
+    }
+    if (!printedHint) {
+      console.log("\u23F8\uFE0F  Waiting for supervisor decision...");
+      for (const item of pending) {
+        console.log(`   - Approve: ralph --approve-suggestion ${item.id}`);
+        console.log(`   - Reject:  ralph --reject-suggestion ${item.id}`);
+      }
+      printedHint = true;
+    }
+    await new Promise((r) => setTimeout(r, getSupervisorPollInterval()));
+  }
+}
+var init_supervisor = __esm(() => {
+  init_context();
+  init_tasks();
+  init_config();
+});
+
+// ralph.ts
+var {$: $2 } = globalThis.Bun;
+import { existsSync as existsSync8, readFileSync as readFileSync8 } from "fs";
+import { join as join3 } from "path";
 // node_modules/@opencode-ai/sdk/dist/gen/core/serverSentEvents.gen.js
 var createSseClient = ({ onSseError, onSseEvent, responseTransformer, responseValidator, sseDefaultRetryDelay, sseMaxRetryAttempts, sseMaxRetryDelay, sseSleepFn, url, ...options }) => {
   let lastEventId;
@@ -1315,1144 +2471,29 @@ async function createSdkClient(options) {
   };
 }
 
-// src/sdk/executor.ts
-async function executePrompt(options) {
-  const { client: client3, prompt, model, onEvent, signal } = options;
-  const toolCounts = new Map;
-  const errors = [];
-  let output = "";
-  try {
-    const session = await client3.session.create({
-      body: { title: `Ralph iteration ${Date.now()}` }
-    });
-    const eventSubscription = await client3.event.subscribe();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    let sessionComplete = false;
-    const eventPromise = (async () => {
-      try {
-        for await (const event of eventSubscription.stream) {
-          if (signal?.aborted)
-            break;
-          const eventType = event?.type;
-          if (eventType === "session.idle" || eventType === "session.error") {
-            sessionComplete = true;
-          }
-          const sdkEvent = parseSdkEvent(event);
-          if (sdkEvent.type === "tool_start" && sdkEvent.toolName) {
-            toolCounts.set(sdkEvent.toolName, (toolCounts.get(sdkEvent.toolName) ?? 0) + 1);
-          }
-          if (sdkEvent.type === "text" && sdkEvent.content) {
-            output += sdkEvent.content;
-          }
-          onEvent?.(sdkEvent);
-          if (sessionComplete) {
-            break;
-          }
-        }
-      } catch (error) {
-        errors.push(`Event stream error: ${error}`);
-      }
-    })();
-    const modelConfig = model ? {
-      providerID: model.split("/")[0] || "openai",
-      modelID: model.split("/")[1] || model
-    } : undefined;
-    const result = await client3.session.prompt({
-      path: { id: session.id },
-      body: {
-        model: modelConfig,
-        parts: [{ type: "text", text: prompt }]
-      }
-    });
-    const timeoutPromise = new Promise((_, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error("Event stream timeout"));
-      }, 30000);
-      signal?.addEventListener("abort", () => {
-        clearTimeout(timeoutId);
-        reject(new Error("Aborted"));
-      });
-    });
-    try {
-      await Promise.race([eventPromise, timeoutPromise]);
-    } catch (error) {
-      if (String(error).includes("Aborted")) {
-        throw error;
-      }
-    }
-    const finalOutput = extractOutputFromMessage(result);
-    return {
-      output: finalOutput || output,
-      toolCounts,
-      errors,
-      success: true,
-      exitCode: 0
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(errorMessage);
-    return {
-      output,
-      toolCounts,
-      errors,
-      success: false,
-      exitCode: 1
-    };
-  }
-}
-function parseSdkEvent(event) {
-  const timestamp = Date.now();
-  if (!event || typeof event !== "object") {
-    return {
-      type: "text",
-      content: "",
-      timestamp
-    };
-  }
-  const eventObj = event;
-  const eventType = typeof eventObj.type === "string" ? eventObj.type : "";
-  const props = eventObj.properties || {};
-  if (eventType === "message.part.delta") {
-    const delta = typeof props.delta === "string" ? props.delta : "";
-    const field = typeof props.field === "string" ? props.field : "";
-    if (field === "text" && delta) {
-      return {
-        type: "text",
-        content: delta,
-        timestamp
-      };
-    }
-    return {
-      type: "text",
-      content: "",
-      timestamp
-    };
-  }
-  if (eventType === "message.part.updated") {
-    const part = props.part || {};
-    const partType = typeof part.type === "string" ? part.type : "";
-    if (partType === "tool_use") {
-      const toolName = typeof part.name === "string" ? part.name : "unknown";
-      return {
-        type: "tool_start",
-        toolName,
-        timestamp
-      };
-    }
-    if (partType === "tool_result") {
-      const toolName = typeof part.name === "string" ? part.name : "unknown";
-      return {
-        type: "tool_end",
-        toolName,
-        timestamp
-      };
-    }
-    if (partType === "text") {
-      const text = typeof part.text === "string" ? part.text : "";
-      const role = typeof part.role === "string" ? part.role : "";
-      if (text && role === "assistant") {
-        return {
-          type: "text",
-          content: text,
-          timestamp
-        };
-      }
-    }
-    if (partType === "reasoning" || partType === "thinking") {
-      const text = typeof part.text === "string" ? part.text : "";
-      if (text) {
-        return {
-          type: "thinking",
-          content: text,
-          timestamp
-        };
-      }
-    }
-  }
-  if (eventType === "session.error") {
-    const error = props.error || {};
-    const errorMessage = typeof error.data?.message === "string" ? error.data.message : typeof error.message === "string" ? error.message : "Unknown error";
-    return {
-      type: "error",
-      content: errorMessage,
-      timestamp
-    };
-  }
-  return {
-    type: "text",
-    content: "",
-    timestamp
-  };
-}
-function extractOutputFromMessage(message) {
-  if (!message || typeof message !== "object") {
-    return "";
-  }
-  const msg = message;
-  const output = [];
-  if (Array.isArray(msg.content)) {
-    for (const part of msg.content) {
-      if (typeof part === "object" && part !== null) {
-        const partObj = part;
-        if (partObj.type === "text" && typeof partObj.text === "string") {
-          output.push(partObj.text);
-        }
-        if (partObj.type === "thinking" && typeof partObj.thinking === "string") {
-          output.push(`[Thinking: ${partObj.thinking}]`);
-        }
-        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
-          output.push(`[Tool ${partObj.name} executed]`);
-        }
-      }
-    }
-  }
-  if (output.length === 0 && typeof msg.text === "string") {
-    output.push(msg.text);
-  }
-  return output.join(`
-`);
-}
-
-// src/sdk/output.ts
-function formatEvent(event) {
-  switch (event.type) {
-    case "text":
-      return event.content || "";
-    case "thinking":
-      return event.content ? `\uD83D\uDCAD ${event.content}` : "";
-    case "tool_start":
-      return event.toolName ? `\uD83D\uDD27 ${event.toolName}...` : "\uD83D\uDD27 Using tool...";
-    case "tool_end":
-      return event.toolName ? `\u2713 ${event.toolName}` : "\u2713 Tool complete";
-    case "error":
-      return event.content ? `\u274C ${event.content}` : "\u274C Error occurred";
-    default:
-      return "";
-  }
-}
-
 // ralph.ts
-var __dirname = "/Users/torugo/go/src/github.com/victorhsb/opencode-ralph";
-var VERSION = process.env.npm_package_version || (existsSync2(join2(__dirname, "package.json")) ? JSON.parse(readFileSync2(join2(__dirname, "package.json"), "utf-8")).version : "2.0.1");
-var stateDir = join2(process.cwd(), ".ralph");
-var statePath = join2(stateDir, "ralph-loop.state.json");
-var contextPath = join2(stateDir, "ralph-context.md");
-var historyPath = join2(stateDir, "ralph-history.json");
-var tasksPath = join2(stateDir, "ralph-tasks.md");
-var supervisorMemoryPath = join2(stateDir, "supervisor-memory.md");
-var supervisorSuggestionsPath = join2(stateDir, "supervisor-suggestions.json");
-var args = process.argv.slice(2);
-if (args.includes("--help") || args.includes("-h")) {
-  console.log(`
-Ralph Wiggum Loop - Iterative AI development with OpenCode
+init_state();
+init_tasks();
+init_context();
+init_supervisor();
 
-Usage:
-  ralph "<prompt>" [options]
-  ralph --prompt-file <path> [options]
-
-Arguments:
-  prompt              Task description for the AI to work on
-
-Options:
-  --model MODEL       Model to use (e.g., anthropic/claude-sonnet-4)
-  --min-iterations N  Minimum iterations before completion allowed (default: 1)
-  --max-iterations N  Maximum iterations before stopping (default: unlimited)
-  --completion-promise TEXT  Phrase that signals completion (default: COMPLETE)
-  --abort-promise TEXT  Phrase that signals early abort (e.g., precondition failed)
-  --tasks, -t         Enable Tasks Mode for structured task tracking
-  --task-promise TEXT Phrase that signals task completion (default: READY_FOR_NEXT_TASK)
-  --supervisor       Enable post-iteration supervisor loop
-  --supervisor-model MODEL  Supervisor model
-  --supervisor-no-action-promise TEXT  Promise for no-op supervisor run (default: NO_ACTION_NEEDED)
-  --supervisor-suggestion-promise TEXT Promise when supervisor suggests change (default: USER_DECISION_REQUIRED)
-  --supervisor-memory-limit N  Number of supervisor memory entries to keep (default: 20)
-  --supervisor-prompt-template PATH  Custom prompt template for supervisor
-  --prompt-file, --file, -f  Read prompt content from a file
-  --prompt-template PATH  Use custom prompt template (supports variables)
-  --no-stream         Buffer output and print at the end
-  --verbose-tools     Print every tool line (disable compact tool summary)
-  --no-plugins        Disable non-auth OpenCode plugins for this run
-  --no-commit         Don't auto-commit after each iteration
-  --allow-all         Auto-approve all tool permissions (default: on)
-  --no-allow-all      Require interactive permission prompts
-  --version, -v       Show version
-  --help, -h          Show this help
-
-Commands:
-  --status            Show current Ralph loop status and history
-  --status --tasks    Show status including current task list
-  --add-context TEXT  Add context for the next iteration (or edit .ralph/ralph-context.md)
-  --clear-context     Clear any pending context
-  --list-tasks        Display the current task list with indices
-  --add-task "desc"   Add a new task to the list
-  --remove-task N     Remove task at index N (including subtasks)
-  --list-suggestions  Show supervisor suggestions and statuses
-  --approve-suggestion ID  Approve and apply a pending supervisor suggestion
-  --reject-suggestion ID   Reject a pending supervisor suggestion
-
-Examples:
-  ralph "Build a REST API for todos"
-  ralph "Fix the auth bug" --max-iterations 10
-  ralph "Add tests" --completion-promise "ALL TESTS PASS" --model anthropic/claude-sonnet-4
-  ralph --prompt-file ./prompt.md --max-iterations 5
-  ralph --status                                        # Check loop status
-  ralph --add-context "Focus on the auth module first"  # Add hint for next iteration
-
-How it works:
-  1. Sends your prompt to OpenCode via SDK
-  2. OpenCode works on the task
-  3. Checks output for completion promise
-  4. If not complete, repeats with same prompt
-  5. OpenCode sees its previous work in files
-  6. Continues until promise detected or max iterations
-
-To stop manually: Ctrl+C
-
-Learn more: https://ghuntley.com/ralph/
-`);
-  process.exit(0);
-}
-if (args.includes("--version") || args.includes("-v")) {
-  console.log(`ralph ${VERSION}`);
-  process.exit(0);
-}
-function loadHistory() {
-  if (!existsSync2(historyPath)) {
-    return {
-      iterations: [],
-      totalDurationMs: 0,
-      struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
-    };
-  }
-  try {
-    return JSON.parse(readFileSync2(historyPath, "utf-8"));
-  } catch {
-    return {
-      iterations: [],
-      totalDurationMs: 0,
-      struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
-    };
-  }
-}
-function saveHistory(history) {
-  if (!existsSync2(stateDir)) {
-    mkdirSync(stateDir, { recursive: true });
-  }
-  writeFileSync(historyPath, JSON.stringify(history, null, 2));
-}
-function clearHistory() {
-  if (existsSync2(historyPath)) {
-    try {
-      __require("fs").unlinkSync(historyPath);
-    } catch {}
-  }
-}
-function ensureStateDir() {
-  if (!existsSync2(stateDir)) {
-    mkdirSync(stateDir, { recursive: true });
-  }
-}
-function loadSupervisorSuggestions(path = supervisorSuggestionsPath) {
-  if (!existsSync2(path)) {
-    return { suggestions: [] };
-  }
-  try {
-    const parsed = JSON.parse(readFileSync2(path, "utf-8"));
-    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.suggestions)) {
-      return { suggestions: [] };
-    }
-    const suggestions = parsed.suggestions.filter((item) => item && typeof item === "object");
-    return { suggestions };
-  } catch {
-    return { suggestions: [], parseError: `Could not parse suggestions file at ${path}` };
-  }
-}
-function saveSupervisorSuggestions(store, path = supervisorSuggestionsPath) {
-  ensureStateDir();
-  writeFileSync(path, JSON.stringify(store, null, 2));
-}
-function parseSupervisorMemory(path = supervisorMemoryPath) {
-  if (!existsSync2(path))
-    return [];
-  const content = readFileSync2(path, "utf-8").trim();
-  if (!content)
-    return [];
-  const sections = content.split(/\n(?=## )/g);
-  const entries = [];
-  for (const section of sections) {
-    const lines = section.split(`
-`);
-    if (!lines[0]?.startsWith("## "))
-      continue;
-    const header = lines[0].replace(/^##\s+/, "").trim();
-    const headerMatch = header.match(/^(.+?)\s+\|\s+Iteration\s+(\d+)$/i);
-    if (!headerMatch)
-      continue;
-    const timestamp = headerMatch[1].trim();
-    const iteration = parseInt(headerMatch[2], 10);
-    const summaryLine = lines.find((line) => line.startsWith("- Summary: "));
-    const decisionLine = lines.find((line) => line.startsWith("- Decision: "));
-    if (!summaryLine || !decisionLine || Number.isNaN(iteration))
-      continue;
-    entries.push({
-      iteration,
-      summary: summaryLine.replace("- Summary: ", "").trim(),
-      decision: decisionLine.replace("- Decision: ", "").trim(),
-      timestamp
-    });
-  }
-  return entries;
-}
-function saveSupervisorMemory(entries, path = supervisorMemoryPath) {
-  ensureStateDir();
-  const content = [
-    "# Supervisor Memory",
-    "",
-    ...entries.flatMap((entry) => [
-      `## ${entry.timestamp} | Iteration ${entry.iteration}`,
-      `- Summary: ${entry.summary}`,
-      `- Decision: ${entry.decision}`,
-      ""
-    ])
-  ].join(`
-`).trimEnd() + `
-`;
-  writeFileSync(path, content);
-}
-function appendSupervisorMemory(entry, memoryLimit, path = supervisorMemoryPath) {
-  const existing = parseSupervisorMemory(path);
-  const boundedLimit = Number.isFinite(memoryLimit) && memoryLimit > 0 ? Math.floor(memoryLimit) : 20;
-  const next = [...existing, entry].slice(-boundedLimit);
-  saveSupervisorMemory(next, path);
-}
-function buildSupervisorSuggestionId(iteration) {
-  const rand = Math.random().toString(36).slice(2, 8);
-  return `sup-${iteration}-${Date.now()}-${rand}`;
-}
-function truncateForPrompt(text, maxChars) {
-  if (text.length <= maxChars)
-    return text;
-  return `${text.slice(0, Math.max(0, maxChars - 20))}
-...[truncated]`;
-}
-function appendContextEntry(contextText) {
-  ensureStateDir();
-  const timestamp = new Date().toISOString();
-  const newEntry = `
-## Context added at ${timestamp}
-${contextText}
-`;
-  if (existsSync2(contextPath)) {
-    const existing = readFileSync2(contextPath, "utf-8");
-    writeFileSync(contextPath, existing + newEntry);
-  } else {
-    writeFileSync(contextPath, `# Ralph Loop Context
-${newEntry}`);
-  }
-}
-function appendTaskEntry(taskDescription) {
-  ensureStateDir();
-  let tasksContent = "";
-  if (existsSync2(tasksPath)) {
-    tasksContent = readFileSync2(tasksPath, "utf-8");
-  } else {
-    tasksContent = `# Ralph Tasks
-
-`;
-  }
-  const newTaskContent = tasksContent.trimEnd() + `
-` + `- [ ] ${taskDescription}
-`;
-  writeFileSync(tasksPath, newTaskContent);
-}
-function displaySupervisorSuggestions(store) {
-  if (store.suggestions.length === 0) {
-    console.log("No supervisor suggestions found.");
-    return;
-  }
-  console.log("Supervisor suggestions:");
-  for (const suggestion of store.suggestions) {
-    console.log(`- ${suggestion.id} [${suggestion.status}] iteration ${suggestion.iteration}`);
-    console.log(`  ${suggestion.kind}: ${suggestion.title}`);
-    if (suggestion.details) {
-      console.log(`  details: ${suggestion.details}`);
-    }
-  }
-}
-function applyApprovedSuggestion(suggestion) {
-  try {
-    if (suggestion.kind === "add_task") {
-      const taskText = suggestion.proposedChanges.task ?? suggestion.details;
-      if (!taskText?.trim()) {
-        return { ok: false, error: "missing task text in suggestion payload" };
-      }
-      appendTaskEntry(taskText.trim());
-      return { ok: true };
-    }
-    if (suggestion.kind === "add_context") {
-      const contextText = suggestion.proposedChanges.context ?? suggestion.details;
-      if (!contextText?.trim()) {
-        return { ok: false, error: "missing context text in suggestion payload" };
-      }
-      appendContextEntry(contextText.trim());
-      return { ok: true };
-    }
-    return { ok: false, error: `unsupported suggestion kind: ${suggestion.kind}` };
-  } catch (error) {
-    return { ok: false, error: String(error) };
-  }
-}
-if (args.includes("--status")) {
-  const state = loadState();
-  const history = loadHistory();
-  const context = existsSync2(contextPath) ? readFileSync2(contextPath, "utf-8").trim() : null;
-  const supervisorSuggestions = loadSupervisorSuggestions();
-  const pendingSuggestions = supervisorSuggestions.suggestions.filter((s) => s.status === "pending").length;
-  const showTasks = args.includes("--tasks") || args.includes("-t") || state?.tasksMode;
-  console.log(`
-\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
-\u2551                    Ralph Wiggum Status                           \u2551
-\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
-`);
-  if (state?.active) {
-    const elapsed = Date.now() - new Date(state.startedAt).getTime();
-    const elapsedStr = formatDurationLong(elapsed);
-    console.log(`\uD83D\uDD04 ACTIVE LOOP`);
-    console.log(`   Iteration:    ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"}`);
-    console.log(`   Started:      ${state.startedAt}`);
-    console.log(`   Elapsed:      ${elapsedStr}`);
-    console.log(`   Promise:      ${state.completionPromise}`);
-    if (state.model)
-      console.log(`   Model:        ${state.model}`);
-    if (state.tasksMode) {
-      console.log(`   Tasks Mode:   ENABLED`);
-      console.log(`   Task Promise: ${state.taskPromise}`);
-    }
-    console.log(`   Prompt:       ${state.prompt.substring(0, 60)}${state.prompt.length > 60 ? "..." : ""}`);
-    if (state.supervisor?.enabled) {
-      console.log(`   Supervisor:   ENABLED`);
-      if (state.supervisor.model) {
-        console.log(`   Sup Model:    ${state.supervisor.model}`);
-      }
-      console.log(`   Sup Pending:  ${pendingSuggestions}`);
-      if (state.supervisorState?.pausedForDecision) {
-        console.log(`   Sup Status:   waiting for user decision`);
-      }
-    }
-  } else {
-    console.log(`\u23F9\uFE0F  No active loop`);
-  }
-  if (context) {
-    console.log(`
-\uD83D\uDCDD PENDING CONTEXT (will be injected next iteration):`);
-    console.log(`   ${context.split(`
-`).join(`
-   `)}`);
-  }
-  if (supervisorSuggestions.parseError) {
-    console.log(`
-\u26A0\uFE0F  SUPERVISOR DATA WARNING: ${supervisorSuggestions.parseError}`);
-  }
-  if (showTasks) {
-    if (existsSync2(tasksPath)) {
-      try {
-        const tasksContent = readFileSync2(tasksPath, "utf-8");
-        const tasks = parseTasks(tasksContent);
-        if (tasks.length > 0) {
-          console.log(`
-\uD83D\uDCCB CURRENT TASKS:`);
-          for (let i = 0;i < tasks.length; i++) {
-            const task = tasks[i];
-            const statusIcon = task.status === "complete" ? "\u2705" : task.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
-            console.log(`   ${i + 1}. ${statusIcon} ${task.text}`);
-            for (const subtask of task.subtasks) {
-              const subStatusIcon = subtask.status === "complete" ? "\u2705" : subtask.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
-              console.log(`      ${subStatusIcon} ${subtask.text}`);
-            }
-          }
-          const complete = tasks.filter((t) => t.status === "complete").length;
-          const inProgress = tasks.filter((t) => t.status === "in-progress").length;
-          console.log(`
-   Progress: ${complete}/${tasks.length} complete, ${inProgress} in progress`);
-        } else {
-          console.log(`
-\uD83D\uDCCB CURRENT TASKS: (no tasks found)`);
-        }
-      } catch {
-        console.log(`
-\uD83D\uDCCB CURRENT TASKS: (error reading tasks)`);
-      }
-    } else {
-      console.log(`
-\uD83D\uDCCB CURRENT TASKS: (no tasks file found)`);
-    }
-  }
-  if (history.iterations.length > 0) {
-    console.log(`
-\uD83D\uDCCA HISTORY (${history.iterations.length} iterations)`);
-    console.log(`   Total time:   ${formatDurationLong(history.totalDurationMs)}`);
-    const recent = history.iterations.slice(-5);
-    console.log(`
-   Recent iterations:`);
-    for (const iter of recent) {
-      const tools = Object.entries(iter.toolsUsed).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k}(${v})`).join(" ");
-      const modelLabel = iter.model ?? "unknown";
-      console.log(`   #${iter.iteration}  ${formatDurationLong(iter.durationMs)}  ${modelLabel}  ${tools || "no tools"}`);
-    }
-    const struggle = history.struggleIndicators;
-    const hasRepeatedErrors = Object.values(struggle.repeatedErrors).some((count) => count >= 2);
-    if (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3 || hasRepeatedErrors) {
-      console.log(`
-\u26A0\uFE0F  STRUGGLE INDICATORS:`);
-      if (struggle.noProgressIterations >= 3) {
-        console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
-      }
-      if (struggle.shortIterations >= 3) {
-        console.log(`   - ${struggle.shortIterations} very short iterations (< 30s)`);
-      }
-      const topErrors = Object.entries(struggle.repeatedErrors).filter(([_, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3);
-      for (const [error, count] of topErrors) {
-        console.log(`   - Same error ${count}x: "${error.substring(0, 50)}..."`);
-      }
-      console.log(`
-   \uD83D\uDCA1 Consider using: ralph --add-context "your hint here"`);
-    }
-  }
-  console.log("");
-  process.exit(0);
-}
-if (args.includes("--list-suggestions")) {
-  const store = loadSupervisorSuggestions();
-  if (store.parseError) {
-    console.error(`Error: ${store.parseError}`);
-    process.exit(1);
-  }
-  displaySupervisorSuggestions(store);
-  process.exit(0);
-}
-var approveSuggestionIdx = args.indexOf("--approve-suggestion");
-if (approveSuggestionIdx !== -1) {
-  const suggestionId = args[approveSuggestionIdx + 1];
-  if (!suggestionId) {
-    console.error("Error: --approve-suggestion requires an ID");
-    process.exit(1);
-  }
-  const store = loadSupervisorSuggestions();
-  if (store.parseError) {
-    console.error(`Error: ${store.parseError}`);
-    process.exit(1);
-  }
-  const suggestion = store.suggestions.find((s) => s.id === suggestionId);
-  if (!suggestion) {
-    console.error(`Error: Suggestion not found: ${suggestionId}`);
-    process.exit(1);
-  }
-  if (suggestion.status !== "pending") {
-    console.error(`Error: Suggestion ${suggestionId} is already ${suggestion.status}`);
-    process.exit(1);
-  }
-  suggestion.status = "approved";
-  suggestion.decidedAt = new Date().toISOString();
-  const applied = applyApprovedSuggestion(suggestion);
-  if (applied.ok) {
-    suggestion.status = "applied";
-    suggestion.appliedAt = new Date().toISOString();
-    console.log(`\u2705 Suggestion ${suggestionId} approved and applied`);
-  } else {
-    suggestion.status = "failed";
-    suggestion.error = applied.error;
-    console.error(`\u274C Suggestion ${suggestionId} approved but failed to apply: ${applied.error}`);
-    saveSupervisorSuggestions(store);
-    process.exit(1);
-  }
-  saveSupervisorSuggestions(store);
-  process.exit(0);
-}
-var rejectSuggestionIdx = args.indexOf("--reject-suggestion");
-if (rejectSuggestionIdx !== -1) {
-  const suggestionId = args[rejectSuggestionIdx + 1];
-  if (!suggestionId) {
-    console.error("Error: --reject-suggestion requires an ID");
-    process.exit(1);
-  }
-  const store = loadSupervisorSuggestions();
-  if (store.parseError) {
-    console.error(`Error: ${store.parseError}`);
-    process.exit(1);
-  }
-  const suggestion = store.suggestions.find((s) => s.id === suggestionId);
-  if (!suggestion) {
-    console.error(`Error: Suggestion not found: ${suggestionId}`);
-    process.exit(1);
-  }
-  if (suggestion.status !== "pending") {
-    console.error(`Error: Suggestion ${suggestionId} is already ${suggestion.status}`);
-    process.exit(1);
-  }
-  suggestion.status = "rejected";
-  suggestion.decidedAt = new Date().toISOString();
-  saveSupervisorSuggestions(store);
-  console.log(`\u2705 Suggestion ${suggestionId} rejected`);
-  process.exit(0);
-}
-var addContextIdx = args.indexOf("--add-context");
-if (addContextIdx !== -1) {
-  const contextText = args[addContextIdx + 1];
-  if (!contextText) {
-    console.error("Error: --add-context requires a text argument");
-    console.error('Usage: ralph --add-context "Your context or hint here"');
-    process.exit(1);
-  }
-  appendContextEntry(contextText);
-  console.log(`\u2705 Context added for next iteration`);
-  console.log(`   File: ${contextPath}`);
-  const state = loadState();
-  if (state?.active) {
-    console.log(`   Will be picked up in iteration ${state.iteration + 1}`);
-  } else {
-    console.log(`   Will be used when loop starts`);
-  }
-  process.exit(0);
-}
-if (args.includes("--clear-context")) {
-  if (existsSync2(contextPath)) {
-    __require("fs").unlinkSync(contextPath);
-    console.log(`\u2705 Context cleared`);
-  } else {
-    console.log(`\u2139\uFE0F  No pending context to clear`);
-  }
-  process.exit(0);
-}
-if (args.includes("--list-tasks")) {
-  if (!existsSync2(tasksPath)) {
-    console.log("No tasks file found. Use --add-task to create your first task.");
-    process.exit(0);
-  }
-  try {
-    const tasksContent = readFileSync2(tasksPath, "utf-8");
-    const tasks = parseTasks(tasksContent);
-    displayTasksWithIndices(tasks);
-  } catch (error) {
-    console.error("Error reading tasks file:", error);
-    process.exit(1);
-  }
-  process.exit(0);
-}
-var addTaskIdx = args.indexOf("--add-task");
-if (addTaskIdx !== -1) {
-  const taskDescription = args[addTaskIdx + 1];
-  if (!taskDescription) {
-    console.error("Error: --add-task requires a description");
-    console.error('Usage: ralph --add-task "Task description"');
-    process.exit(1);
-  }
-  try {
-    appendTaskEntry(taskDescription);
-    console.log(`\u2705 Task added: "${taskDescription}"`);
-  } catch (error) {
-    console.error("Error adding task:", error);
-    process.exit(1);
-  }
-  process.exit(0);
-}
-var removeTaskIdx = args.indexOf("--remove-task");
-if (removeTaskIdx !== -1) {
-  const taskIndexStr = args[removeTaskIdx + 1];
-  if (!taskIndexStr || isNaN(parseInt(taskIndexStr))) {
-    console.error("Error: --remove-task requires a valid number");
-    console.error("Usage: ralph --remove-task 3");
-    process.exit(1);
-  }
-  const taskIndex = parseInt(taskIndexStr);
-  if (!existsSync2(tasksPath)) {
-    console.error("Error: No tasks file found");
-    process.exit(1);
-  }
-  try {
-    const tasksContent = readFileSync2(tasksPath, "utf-8");
-    const tasks = parseTasks(tasksContent);
-    if (taskIndex < 1 || taskIndex > tasks.length) {
-      console.error(`Error: Task index ${taskIndex} is out of range (1-${tasks.length})`);
-      process.exit(1);
-    }
-    const lines = tasksContent.split(`
-`);
-    const newLines = [];
-    let inRemovedTask = false;
-    let currentTaskLine = 0;
-    for (const line of lines) {
-      if (line.match(/^- \[/)) {
-        currentTaskLine++;
-        if (currentTaskLine === taskIndex) {
-          inRemovedTask = true;
-          continue;
-        } else {
-          inRemovedTask = false;
-        }
-      }
-      if (inRemovedTask && line.match(/^\s+/) && line.trim() !== "") {
-        continue;
-      }
-      newLines.push(line);
-    }
-    writeFileSync(tasksPath, newLines.join(`
-`));
-    console.log(`\u2705 Removed task ${taskIndex} and its subtasks`);
-  } catch (error) {
-    console.error("Error removing task:", error);
-    process.exit(1);
-  }
-  process.exit(0);
-}
-function formatDurationLong(ms) {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor(totalSeconds % 3600 / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) {
-    return `${hours}h ${minutes}m ${seconds}s`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
-  }
-  return `${seconds}s`;
-}
-function parseTasks(content) {
-  const tasks = [];
-  const lines = content.split(`
-`);
-  let currentTask = null;
-  for (const line of lines) {
-    const topLevelMatch = line.match(/^- \[([ x\/])\]\s*(.+)/);
-    if (topLevelMatch) {
-      if (currentTask) {
-        tasks.push(currentTask);
-      }
-      const [, statusChar, text] = topLevelMatch;
-      let status = "todo";
-      if (statusChar === "x")
-        status = "complete";
-      else if (statusChar === "/")
-        status = "in-progress";
-      currentTask = { text, status, subtasks: [], originalLine: line };
-      continue;
-    }
-    const subtaskMatch = line.match(/^\s+- \[([ x\/])\]\s*(.+)/);
-    if (subtaskMatch && currentTask) {
-      const [, statusChar, text] = subtaskMatch;
-      let status = "todo";
-      if (statusChar === "x")
-        status = "complete";
-      else if (statusChar === "/")
-        status = "in-progress";
-      currentTask.subtasks.push({ text, status, subtasks: [], originalLine: line });
-    }
-  }
-  if (currentTask) {
-    tasks.push(currentTask);
-  }
-  return tasks;
-}
-function displayTasksWithIndices(tasks) {
-  if (tasks.length === 0) {
-    console.log("No tasks found.");
-    return;
-  }
-  console.log("Current tasks:");
-  for (let i = 0;i < tasks.length; i++) {
-    const task = tasks[i];
-    const statusIcon = task.status === "complete" ? "\u2705" : task.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
-    console.log(`${i + 1}. ${statusIcon} ${task.text}`);
-    for (const subtask of task.subtasks) {
-      const subStatusIcon = subtask.status === "complete" ? "\u2705" : subtask.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
-      console.log(`   ${subStatusIcon} ${subtask.text}`);
-    }
-  }
-}
-function findCurrentTask(tasks) {
-  for (const task of tasks) {
-    if (task.status === "in-progress") {
-      return task;
-    }
-  }
-  return null;
-}
-function findNextTask(tasks) {
-  for (const task of tasks) {
-    if (task.status === "todo") {
-      return task;
-    }
-  }
-  return null;
-}
-function allTasksComplete(tasks) {
-  return tasks.length > 0 && tasks.every((t) => t.status === "complete");
-}
-var prompt = "";
-var minIterations = 1;
-var maxIterations = 0;
-var completionPromise = "COMPLETE";
-var abortPromise = "";
-var tasksMode = false;
-var taskPromise = "READY_FOR_NEXT_TASK";
-var model = "";
-var autoCommit = true;
-var disablePlugins = false;
-var allowAllPermissions = true;
-var promptFile = "";
-var promptTemplatePath = "";
-var streamOutput = true;
-var verboseTools = false;
-var promptSource = "";
-var supervisorEnabled = false;
-var supervisorModel = "";
-var supervisorNoActionPromise = "NO_ACTION_NEEDED";
-var supervisorSuggestionPromise = "USER_DECISION_REQUIRED";
-var supervisorMemoryLimit = 20;
-var supervisorPromptTemplatePath = "";
-var supervisorOptionsTouched = false;
-var promptParts = [];
-var extraAgentFlags = [];
-var doubleDashIndex = args.indexOf("--");
-if (doubleDashIndex !== -1) {
-  extraAgentFlags = args.slice(doubleDashIndex + 1);
-  args.splice(doubleDashIndex);
-}
-for (let i = 0;i < args.length; i++) {
-  const arg = args[i];
-  if (arg === "--min-iterations") {
-    const val = args[++i];
-    if (!val || isNaN(parseInt(val))) {
-      console.error("Error: --min-iterations requires a number");
-      process.exit(1);
-    }
-    minIterations = parseInt(val);
-  } else if (arg === "--max-iterations") {
-    const val = args[++i];
-    if (!val || isNaN(parseInt(val))) {
-      console.error("Error: --max-iterations requires a number");
-      process.exit(1);
-    }
-    maxIterations = parseInt(val);
-  } else if (arg === "--completion-promise") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --completion-promise requires a value");
-      process.exit(1);
-    }
-    completionPromise = val;
-  } else if (arg === "--abort-promise") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --abort-promise requires a value");
-      process.exit(1);
-    }
-    abortPromise = val;
-  } else if (arg === "--tasks" || arg === "-t") {
-    tasksMode = true;
-  } else if (arg === "--task-promise") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --task-promise requires a value");
-      process.exit(1);
-    }
-    taskPromise = val;
-  } else if (arg === "--model") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --model requires a value");
-      process.exit(1);
-    }
-    model = val;
-  } else if (arg === "--supervisor") {
-    supervisorEnabled = true;
-    supervisorOptionsTouched = true;
-  } else if (arg === "--supervisor-model") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --supervisor-model requires a value");
-      process.exit(1);
-    }
-    supervisorModel = val;
-    supervisorOptionsTouched = true;
-  } else if (arg === "--supervisor-no-action-promise") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --supervisor-no-action-promise requires a value");
-      process.exit(1);
-    }
-    supervisorNoActionPromise = val;
-    supervisorOptionsTouched = true;
-  } else if (arg === "--supervisor-suggestion-promise") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --supervisor-suggestion-promise requires a value");
-      process.exit(1);
-    }
-    supervisorSuggestionPromise = val;
-    supervisorOptionsTouched = true;
-  } else if (arg === "--supervisor-memory-limit") {
-    const val = args[++i];
-    if (!val || isNaN(parseInt(val))) {
-      console.error("Error: --supervisor-memory-limit requires a number");
-      process.exit(1);
-    }
-    supervisorMemoryLimit = parseInt(val, 10);
-    if (supervisorMemoryLimit <= 0) {
-      console.error("Error: --supervisor-memory-limit must be greater than 0");
-      process.exit(1);
-    }
-    supervisorOptionsTouched = true;
-  } else if (arg === "--supervisor-prompt-template") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --supervisor-prompt-template requires a file path");
-      process.exit(1);
-    }
-    supervisorPromptTemplatePath = val;
-    supervisorOptionsTouched = true;
-  } else if (arg === "--prompt-file" || arg === "--file" || arg === "-f") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --prompt-file requires a file path");
-      process.exit(1);
-    }
-    promptFile = val;
-  } else if (arg === "--prompt-template") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --prompt-template requires a file path");
-      process.exit(1);
-    }
-    promptTemplatePath = val;
-  } else if (arg === "--no-stream") {
-    streamOutput = false;
-  } else if (arg === "--stream") {
-    streamOutput = true;
-  } else if (arg === "--verbose-tools") {
-    verboseTools = true;
-  } else if (arg === "--no-commit") {
-    autoCommit = false;
-  } else if (arg === "--no-plugins") {
-    disablePlugins = true;
-  } else if (arg === "--allow-all") {
-    allowAllPermissions = true;
-  } else if (arg === "--no-allow-all") {
-    allowAllPermissions = false;
-  } else if (arg.startsWith("-")) {
-    console.error(`Error: Unknown option: ${arg}`);
-    console.error("Run 'ralph --help' for available options");
-    process.exit(1);
-  } else {
-    promptParts.push(arg);
-  }
-}
-if (supervisorOptionsTouched) {
-  supervisorEnabled = true;
-}
-function readPromptFile(path) {
-  if (!existsSync2(path)) {
-    console.error(`Error: Prompt file not found: ${path}`);
-    process.exit(1);
-  }
-  try {
-    const stat = statSync(path);
-    if (!stat.isFile()) {
-      console.error(`Error: Prompt path is not a file: ${path}`);
-      process.exit(1);
-    }
-  } catch {
-    console.error(`Error: Unable to stat prompt file: ${path}`);
-    process.exit(1);
-  }
-  try {
-    const content = readFileSync2(path, "utf-8");
-    if (!content.trim()) {
-      console.error(`Error: Prompt file is empty: ${path}`);
-      process.exit(1);
-    }
-    return content;
-  } catch {
-    console.error(`Error: Unable to read prompt file: ${path}`);
-    process.exit(1);
-  }
-}
-if (promptFile) {
-  promptSource = promptFile;
-  prompt = readPromptFile(promptFile);
-} else if (promptParts.length === 1 && existsSync2(promptParts[0])) {
-  promptSource = promptParts[0];
-  prompt = readPromptFile(promptParts[0]);
-} else {
-  prompt = promptParts.join(" ");
-}
-if (!prompt) {
-  const existingState = loadState();
-  if (existingState?.active) {
-    prompt = existingState.prompt;
-  } else {
-    console.error("Error: No prompt provided");
-    console.error('Usage: ralph "Your task description" [options]');
-    console.error("Run 'ralph --help' for more information");
-    process.exit(1);
-  }
-}
-if (maxIterations > 0 && minIterations > maxIterations) {
-  console.error(`Error: --min-iterations (${minIterations}) cannot be greater than --max-iterations (${maxIterations})`);
-  process.exit(1);
-}
-function saveState(state) {
-  if (!existsSync2(stateDir)) {
-    mkdirSync(stateDir, { recursive: true });
-  }
-  writeFileSync(statePath, JSON.stringify(state, null, 2));
-}
-function loadState() {
-  if (!existsSync2(statePath)) {
-    return null;
-  }
-  try {
-    return JSON.parse(readFileSync2(statePath, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-function clearState() {
-  if (existsSync2(statePath)) {
-    try {
-      __require("fs").unlinkSync(statePath);
-    } catch {}
-  }
-}
-function loadContext() {
-  if (!existsSync2(contextPath)) {
-    return null;
-  }
-  try {
-    const content = readFileSync2(contextPath, "utf-8").trim();
-    return content || null;
-  } catch {
-    return null;
-  }
-}
-function clearContext() {
-  if (existsSync2(contextPath)) {
-    try {
-      __require("fs").unlinkSync(contextPath);
-    } catch {}
-  }
-}
+// src/prompts/prompts.ts
+init_context();
+init_tasks();
+init_config();
+import { existsSync as existsSync6, readFileSync as readFileSync6 } from "fs";
 function loadCustomPromptTemplate(templatePath, state) {
-  if (!existsSync2(templatePath)) {
+  if (!existsSync6(templatePath)) {
     console.error(`Error: Prompt template not found: ${templatePath}`);
     process.exit(1);
   }
   try {
-    let template = readFileSync2(templatePath, "utf-8");
+    let template = readFileSync6(templatePath, "utf-8");
     const context = loadContext() || "";
+    const tasksPath = getTasksFilePath();
     let tasksContent = "";
-    if (state.tasksMode && existsSync2(tasksPath)) {
-      tasksContent = readFileSync2(tasksPath, "utf-8");
+    if (state.tasksMode && existsSync6(tasksPath)) {
+      tasksContent = readFileSync6(tasksPath, "utf-8");
     }
     template = template.replace(/\{\{iteration\}\}/g, String(state.iteration)).replace(/\{\{max_iterations\}\}/g, state.maxIterations > 0 ? String(state.maxIterations) : "unlimited").replace(/\{\{min_iterations\}\}/g, String(state.minIterations)).replace(/\{\{prompt\}\}/g, state.prompt).replace(/\{\{completion_promise\}\}/g, state.completionPromise).replace(/\{\{abort_promise\}\}/g, state.abortPromise || "").replace(/\{\{task_promise\}\}/g, state.taskPromise).replace(/\{\{context\}\}/g, context).replace(/\{\{tasks\}\}/g, tasksContent);
     return template;
@@ -2461,7 +2502,7 @@ function loadCustomPromptTemplate(templatePath, state) {
     process.exit(1);
   }
 }
-function buildPrompt(state) {
+function buildPrompt(state, promptTemplatePath) {
   if (promptTemplatePath) {
     const customPrompt = loadCustomPromptTemplate(promptTemplatePath, state);
     if (customPrompt)
@@ -2535,347 +2576,8 @@ ${state.prompt}
 Now, work on the task. Good luck!
 `.trim();
 }
-function loadCustomSupervisorPromptTemplate(templatePath, state, coderOutput, history) {
-  if (!existsSync2(templatePath)) {
-    console.error(`Error: Supervisor prompt template not found: ${templatePath}`);
-    process.exit(1);
-  }
-  const context = loadContext() || "";
-  const tasksContent = existsSync2(tasksPath) ? readFileSync2(tasksPath, "utf-8") : "";
-  const memoryEntries = parseSupervisorMemory().slice(-10);
-  const memoryText = memoryEntries.map((m) => `${m.timestamp} [iter ${m.iteration}] ${m.summary} (${m.decision})`).join(`
-`);
-  let template = readFileSync2(templatePath, "utf-8");
-  template = template.replace(/\{\{iteration\}\}/g, String(state.iteration)).replace(/\{\{prompt\}\}/g, state.prompt).replace(/\{\{coder_output\}\}/g, coderOutput).replace(/\{\{context\}\}/g, context).replace(/\{\{tasks\}\}/g, tasksContent).replace(/\{\{supervisor_memory\}\}/g, memoryText).replace(/\{\{no_progress_iterations\}\}/g, String(history.struggleIndicators.noProgressIterations)).replace(/\{\{short_iterations\}\}/g, String(history.struggleIndicators.shortIterations));
-  return template;
-}
-function buildSupervisorPrompt(state, supervisorConfig, coderOutput, history) {
-  if (supervisorConfig.promptTemplate) {
-    const template = loadCustomSupervisorPromptTemplate(supervisorConfig.promptTemplate, state, coderOutput, history);
-    if (template)
-      return template;
-  }
-  const context = loadContext() || "(none)";
-  const tasksContent = existsSync2(tasksPath) ? readFileSync2(tasksPath, "utf-8") : "(no tasks file)";
-  const memoryEntries = parseSupervisorMemory().slice(-10);
-  const memoryText = memoryEntries.length > 0 ? memoryEntries.map((m) => `- ${m.timestamp} (iteration ${m.iteration}): ${m.summary} | ${m.decision}`).join(`
-`) : "- no prior supervisor memory";
-  const truncatedOutput = truncateForPrompt(coderOutput, 6000);
-  return `
-# Ralph Supervisor - Iteration ${state.iteration}
-
-You are supervising a coding agent loop. Review the latest coder execution and suggest improvements if needed.
-You must not modify files or take actions. You can only communicate recommendations to the user.
-
-## Supervisor Protocol (strict)
-
-If no action is needed, output exactly:
-<promise>${supervisorConfig.noActionPromise}</promise>
-
-If action is needed, output:
-<promise>${supervisorConfig.suggestionPromise}</promise>
-<supervisor_suggestion>{"kind":"add_task"|"add_context","title":"...","details":"...","proposedChanges":{"task":"..."} or {"context":"..."}}</supervisor_suggestion>
-
-Only allowed kinds: add_task, add_context.
-Return exactly one suggestion block when suggesting action.
-
-## User Prompt
-${state.prompt}
-
-## Current Context
-${context}
-
-## Current Tasks
-\`\`\`markdown
-${tasksContent}
-\`\`\`
-
-## Recent Supervisor Memory
-${memoryText}
-
-## Latest Coder Output
-\`\`\`
-${truncatedOutput}
-\`\`\`
-
-## Struggle Signals
-- no progress iterations: ${history.struggleIndicators.noProgressIterations}
-- short iterations: ${history.struggleIndicators.shortIterations}
-`.trim();
-}
-function parseSupervisorOutput(output, noActionPromise, suggestionPromise, iteration) {
-  const noActionDetected = checkCompletion(output, noActionPromise);
-  const suggestionDetected = checkCompletion(output, suggestionPromise);
-  if (noActionDetected && !suggestionDetected) {
-    return { ok: true, noAction: true, rawOutput: output };
-  }
-  if (!suggestionDetected) {
-    return {
-      ok: false,
-      noAction: false,
-      rawOutput: output,
-      error: "supervisor output missing required promise tag"
-    };
-  }
-  const match = output.match(/<supervisor_suggestion>\s*([\s\S]*?)\s*<\/supervisor_suggestion>/i);
-  if (!match) {
-    return {
-      ok: false,
-      noAction: false,
-      rawOutput: output,
-      error: "suggestion promise found, but missing <supervisor_suggestion> JSON block"
-    };
-  }
-  try {
-    const parsed = JSON.parse(match[1]);
-    const kind = parsed?.kind;
-    const title = typeof parsed?.title === "string" ? parsed.title.trim() : "";
-    const details = typeof parsed?.details === "string" ? parsed.details.trim() : "";
-    const proposedChanges = parsed?.proposedChanges && typeof parsed.proposedChanges === "object" ? parsed.proposedChanges : {};
-    if (kind !== "add_task" && kind !== "add_context") {
-      return { ok: false, noAction: false, rawOutput: output, error: `invalid suggestion kind: ${String(kind)}` };
-    }
-    if (!title) {
-      return { ok: false, noAction: false, rawOutput: output, error: "suggestion title is required" };
-    }
-    if (kind === "add_task" && !proposedChanges.task?.trim()) {
-      return { ok: false, noAction: false, rawOutput: output, error: "add_task suggestion requires proposedChanges.task" };
-    }
-    if (kind === "add_context" && !proposedChanges.context?.trim()) {
-      return { ok: false, noAction: false, rawOutput: output, error: "add_context suggestion requires proposedChanges.context" };
-    }
-    return {
-      ok: true,
-      noAction: false,
-      rawOutput: output,
-      suggestion: {
-        iteration,
-        kind,
-        title,
-        details,
-        proposedChanges
-      }
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      noAction: false,
-      rawOutput: output,
-      error: `invalid supervisor suggestion JSON: ${String(error)}`
-    };
-  }
-}
-async function runSupervisorOnce(state, supervisorConfig, history, coderOutput, sdkClient) {
-  try {
-    const supervisorPrompt = buildSupervisorPrompt(state, supervisorConfig, coderOutput, history);
-    const result = await executePrompt({
-      client: sdkClient.client,
-      prompt: supervisorPrompt,
-      model: supervisorConfig.model,
-      onEvent: (event) => {
-        if (verboseTools) {
-          const formatted = formatEvent(event);
-          if (formatted)
-            console.log(`| [Supervisor] ${formatted}`);
-        }
-      }
-    });
-    if (!result.success) {
-      return {
-        ok: false,
-        noAction: false,
-        rawOutput: result.output,
-        error: result.errors.join("; ") || "SDK execution failed"
-      };
-    }
-    return parseSupervisorOutput(result.output, supervisorConfig.noActionPromise, supervisorConfig.suggestionPromise, state.iteration);
-  } catch (error) {
-    return {
-      ok: false,
-      noAction: false,
-      rawOutput: "",
-      error: String(error)
-    };
-  }
-}
-async function waitForSupervisorDecisionIfNeeded(state, iteration) {
-  let printedHint = false;
-  while (true) {
-    const store = loadSupervisorSuggestions();
-    if (store.parseError) {
-      if (!printedHint) {
-        console.warn(`\u26A0\uFE0F  ${store.parseError}`);
-        console.warn("   Fix the file or reject pending suggestions once readable.");
-        printedHint = true;
-      }
-      await new Promise((r) => setTimeout(r, 2000));
-      continue;
-    }
-    const pending = store.suggestions.filter((s) => s.iteration === iteration && s.status === "pending");
-    if (pending.length === 0) {
-      const approvedApplied = store.suggestions.filter((s) => s.iteration === iteration && (s.status === "approved" || s.status === "applied")).length;
-      state.supervisorState = {
-        ...state.supervisorState ?? { enabled: true, pausedForDecision: false },
-        pausedForDecision: false,
-        pauseIteration: undefined,
-        pauseReason: undefined
-      };
-      saveState(state);
-      return { approvedAppliedCount: approvedApplied };
-    }
-    if (!printedHint) {
-      console.log("\u23F8\uFE0F  Waiting for supervisor decision...");
-      for (const item of pending) {
-        console.log(`   - Approve: ralph --approve-suggestion ${item.id}`);
-        console.log(`   - Reject:  ralph --reject-suggestion ${item.id}`);
-      }
-      printedHint = true;
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-}
-function getTasksModeSection(state) {
-  if (!existsSync2(tasksPath)) {
-    return `
-## TASKS MODE: Enabled (no tasks file found)
-
-Create .ralph/ralph-tasks.md with your task list, or use \`ralph --add-task "description"\` to add tasks.
-`;
-  }
-  try {
-    const tasksContent = readFileSync2(tasksPath, "utf-8");
-    const tasks = parseTasks(tasksContent);
-    const currentTask = findCurrentTask(tasks);
-    const nextTask = findNextTask(tasks);
-    let taskInstructions = "";
-    if (currentTask) {
-      taskInstructions = `
-\uD83D\uDD04 CURRENT TASK: "${currentTask.text}"
-   Focus on completing this specific task.
-   When done: Mark as [x] in .ralph/ralph-tasks.md and output <promise>${state.taskPromise}</promise>`;
-    } else if (nextTask) {
-      taskInstructions = `
-\uD83D\uDCCD NEXT TASK: "${nextTask.text}"
-   Mark as [/] in .ralph/ralph-tasks.md before starting.
-   When done: Mark as [x] and output <promise>${state.taskPromise}</promise>`;
-    } else if (allTasksComplete(tasks)) {
-      taskInstructions = `
-\u2705 ALL TASKS COMPLETE!
-   Output <promise>${state.completionPromise}</promise> to finish.`;
-    } else {
-      taskInstructions = `
-\uD83D\uDCCB No tasks found. Add tasks to .ralph/ralph-tasks.md or use \`ralph --add-task\``;
-    }
-    return `
-## TASKS MODE: Working through task list
-
-Current tasks from .ralph/ralph-tasks.md:
-\`\`\`markdown
-${tasksContent.trim()}
-\`\`\`
-${taskInstructions}
-
-### Task Workflow
-1. Find any task marked [/] (in progress). If none, pick the first [ ] task.
-2. Mark the task as [/] in ralph-tasks.md before starting.
-3. Complete the task.
-4. Mark as [x] when verified complete.
-5. Output <promise>${state.taskPromise}</promise> to move to the next task.
-6. Only output <promise>${state.completionPromise}</promise> when ALL tasks are [x].
-
----
-`;
-  } catch {
-    return `
-## TASKS MODE: Error reading tasks file
-
-Unable to read .ralph/ralph-tasks.md
-`;
-  }
-}
-function checkCompletion(output, promise) {
-  const escapedPromise = escapeRegex(promise);
-  const promisePattern = new RegExp(`<promise>\\s*${escapedPromise}\\s*</promise>`, "gi");
-  const matches = output.match(promisePattern);
-  if (!matches)
-    return false;
-  for (const match of matches) {
-    const matchIndex = output.indexOf(match);
-    const contextBefore = output.substring(Math.max(0, matchIndex - 100), matchIndex).toLowerCase();
-    const negationPatterns = [
-      /\bnot\s+(yet\s+)?(say|output|write|respond|print)/,
-      /\bdon'?t\s+(say|output|write|respond|print)/,
-      /\bwon'?t\s+(say|output|write|respond|print)/,
-      /\bwill\s+not\s+(say|output|write|respond|print)/,
-      /\bshould\s+not\s+(say|output|write|respond|print)/,
-      /\bwouldn'?t\s+(say|output|write|respond|print)/,
-      /\bavoid\s+(saying|outputting|writing)/,
-      /\bwithout\s+(saying|outputting|writing)/,
-      /\bbefore\s+(saying|outputting|I\s+say)/,
-      /\buntil\s+(I\s+)?(say|output|can\s+say)/
-    ];
-    const hasNegation = negationPatterns.some((pattern) => pattern.test(contextBefore));
-    if (hasNegation)
-      continue;
-    const quotesBefore = (contextBefore.match(/["'`]/g) || []).length;
-    if (quotesBefore % 2 === 1)
-      continue;
-    return true;
-  }
-  return false;
-}
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function detectPlaceholderPluginError(output) {
-  return output.includes("ralph-wiggum is not yet ready for use. This is a placeholder package.");
-}
-function detectSdkModelNotFoundError(output) {
-  const lowerOutput = output.toLowerCase();
-  return lowerOutput.includes("providermodelfound") || lowerOutput.includes("model not found") || lowerOutput.includes("provider returned error") || lowerOutput.includes("no model configured");
-}
-function detectSdkPlaceholderPluginError(output) {
-  return output.includes("ralph-wiggum is not yet ready for use");
-}
-function formatDuration(ms) {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor(totalSeconds % 3600 / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-function formatToolSummary(toolCounts, maxItems = 6) {
-  if (!toolCounts.size)
-    return "";
-  const entries = Array.from(toolCounts.entries()).sort((a, b) => b[1] - a[1]);
-  const shown = entries.slice(0, maxItems);
-  const remaining = entries.length - shown.length;
-  const parts = shown.map(([name, count]) => `${name} ${count}`);
-  if (remaining > 0) {
-    parts.push(`+${remaining} more`);
-  }
-  return parts.join(" \u2022 ");
-}
-function printIterationSummary(params) {
-  const toolSummary = formatToolSummary(params.toolCounts);
-  const duration = formatDuration(params.elapsedMs);
-  console.log(`Iteration ${params.iteration} completed in ${duration} (${params.model})`);
-  console.log(`
-Iteration Summary`);
-  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
-  console.log(`Iteration: ${params.iteration}`);
-  console.log(`Elapsed:   ${duration} (${params.model})`);
-  if (toolSummary) {
-    console.log(`Tools:     ${toolSummary}`);
-  } else {
-    console.log("Tools:     none");
-  }
-  console.log(`Exit code: ${params.exitCode}`);
-  console.log(`Completion promise: ${params.completionDetected ? "detected" : "not detected"}`);
-}
+// src/fs-tracker/fs-tracker.ts
+var {$ } = globalThis.Bun;
 async function captureFileSnapshot() {
   const files = new Map;
   try {
@@ -2918,20 +2620,651 @@ function getModifiedFilesSinceSnapshot(before, after) {
   }
   return changedFiles;
 }
-function extractErrors(output) {
-  const errors = [];
-  const lines = output.split(`
+
+// src/cli/commands.ts
+init_state();
+init_supervisor();
+init_context();
+init_tasks();
+init_config();
+import { readFileSync as readFileSync7, existsSync as existsSync7 } from "fs";
+function handleStatusCommand(args) {
+  const state = loadState();
+  const history = loadHistory();
+  const contextPath = getContextPath();
+  const context = existsSync7(contextPath) ? readFileSync7(contextPath, "utf-8").trim() : null;
+  const supervisorSuggestions = loadSupervisorSuggestions();
+  const pendingSuggestions = supervisorSuggestions.suggestions.filter((s) => s.status === "pending").length;
+  const showTasks = args.includes("--tasks") || args.includes("-t") || state?.tasksMode;
+  const tasksPath = getTasksFilePath();
+  console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
+\u2551                    Ralph Wiggum Status                           \u2551
+\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 `);
-  for (const line of lines) {
-    const lower = line.toLowerCase();
-    if (lower.includes("error:") || lower.includes("failed:") || lower.includes("exception:") || lower.includes("typeerror") || lower.includes("syntaxerror") || lower.includes("referenceerror") || lower.includes("test") && lower.includes("fail")) {
-      const cleaned = line.trim().substring(0, 200);
-      if (cleaned && !errors.includes(cleaned)) {
-        errors.push(cleaned);
+  if (state?.active) {
+    const elapsed = Date.now() - new Date(state.startedAt).getTime();
+    const elapsedStr = formatDurationLong(elapsed);
+    console.log(`\uD83D\uDD04 ACTIVE LOOP`);
+    console.log(`   Iteration:    ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"}`);
+    console.log(`   Started:      ${state.startedAt}`);
+    console.log(`   Elapsed:      ${elapsedStr}`);
+    console.log(`   Promise:      ${state.completionPromise}`);
+    if (state.model)
+      console.log(`   Model:        ${state.model}`);
+    if (state.tasksMode) {
+      console.log(`   Tasks Mode:   ENABLED`);
+      console.log(`   Task Promise: ${state.taskPromise}`);
+    }
+    console.log(`   Prompt:       ${state.prompt.substring(0, 60)}${state.prompt.length > 60 ? "..." : ""}`);
+    if (state.supervisor?.enabled) {
+      console.log(`   Supervisor:   ENABLED`);
+      if (state.supervisor.model) {
+        console.log(`   Sup Model:    ${state.supervisor.model}`);
+      }
+      console.log(`   Sup Pending:  ${pendingSuggestions}`);
+      if (state.supervisorState?.pausedForDecision) {
+        console.log(`   Sup Status:   waiting for user decision`);
+      }
+    }
+  } else {
+    console.log(`\u23F9\uFE0F  No active loop`);
+  }
+  if (context) {
+    console.log(`
+\uD83D\uDCDD PENDING CONTEXT (will be injected next iteration):`);
+    console.log(`   ${context.split(`
+`).join(`
+   `)}`);
+  }
+  if (supervisorSuggestions.parseError) {
+    console.log(`
+\u26A0\uFE0F  SUPERVISOR DATA WARNING: ${supervisorSuggestions.parseError}`);
+  }
+  if (showTasks) {
+    if (existsSync7(tasksPath)) {
+      try {
+        const tasks = loadTasks();
+        if (tasks.length > 0) {
+          console.log(`
+\uD83D\uDCCB CURRENT TASKS:`);
+          for (let i = 0;i < tasks.length; i++) {
+            const task = tasks[i];
+            const statusIcon = task.status === "complete" ? "\u2705" : task.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
+            console.log(`   ${i + 1}. ${statusIcon} ${task.text}`);
+            for (const subtask of task.subtasks) {
+              const subStatusIcon = subtask.status === "complete" ? "\u2705" : subtask.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
+              console.log(`      ${subStatusIcon} ${subtask.text}`);
+            }
+          }
+          const complete = tasks.filter((t) => t.status === "complete").length;
+          const inProgress = tasks.filter((t) => t.status === "in-progress").length;
+          console.log(`
+   Progress: ${complete}/${tasks.length} complete, ${inProgress} in progress`);
+        } else {
+          console.log(`
+\uD83D\uDCCB CURRENT TASKS: (no tasks found)`);
+        }
+      } catch {
+        console.log(`
+\uD83D\uDCCB CURRENT TASKS: (error reading tasks)`);
+      }
+    } else {
+      console.log(`
+\uD83D\uDCCB CURRENT TASKS: (no tasks file found)`);
+    }
+  }
+  if (history.iterations.length > 0) {
+    console.log(`
+\uD83D\uDCCA HISTORY (${history.iterations.length} iterations)`);
+    console.log(`   Total time:   ${formatDurationLong(history.totalDurationMs)}`);
+    const recent = history.iterations.slice(-5);
+    console.log(`
+   Recent iterations:`);
+    for (const iter of recent) {
+      const tools = Object.entries(iter.toolsUsed).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k}(${v})`).join(" ");
+      const modelLabel = iter.model ?? "unknown";
+      console.log(`   #${iter.iteration}  ${formatDurationLong(iter.durationMs)}  ${modelLabel}  ${tools || "no tools"}`);
+    }
+    const struggle = history.struggleIndicators;
+    const hasRepeatedErrors = Object.values(struggle.repeatedErrors).some((count) => count >= 2);
+    if (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3 || hasRepeatedErrors) {
+      console.log(`
+\u26A0\uFE0F  STRUGGLE INDICATORS:`);
+      if (struggle.noProgressIterations >= 3) {
+        console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
+      }
+      if (struggle.shortIterations >= 3) {
+        console.log(`   - ${struggle.shortIterations} very short iterations (< 30s)`);
+      }
+      const topErrors = Object.entries(struggle.repeatedErrors).filter(([_, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      for (const [error, count] of topErrors) {
+        console.log(`   - Same error ${count}x: "${error.substring(0, 50)}..."`);
+      }
+      console.log(`
+   \uD83D\uDCA1 Consider using: ralph --add-context "your hint here"`);
+    }
+  }
+  console.log("");
+}
+function handleListSuggestionsCommand() {
+  const store = loadSupervisorSuggestions();
+  if (store.parseError) {
+    console.error(`Error: ${store.parseError}`);
+    process.exit(1);
+  }
+  displaySupervisorSuggestions(store);
+}
+function handleApproveSuggestionCommand(args) {
+  const approveSuggestionIdx = args.indexOf("--approve-suggestion");
+  const suggestionId = args[approveSuggestionIdx + 1];
+  if (!suggestionId) {
+    console.error("Error: --approve-suggestion requires an ID");
+    process.exit(1);
+  }
+  const store = loadSupervisorSuggestions();
+  if (store.parseError) {
+    console.error(`Error: ${store.parseError}`);
+    process.exit(1);
+  }
+  const suggestion = store.suggestions.find((s) => s.id === suggestionId);
+  if (!suggestion) {
+    console.error(`Error: Suggestion not found: ${suggestionId}`);
+    process.exit(1);
+  }
+  if (suggestion.status !== "pending") {
+    console.error(`Error: Suggestion ${suggestionId} is already ${suggestion.status}`);
+    process.exit(1);
+  }
+  suggestion.status = "approved";
+  suggestion.decidedAt = new Date().toISOString();
+  const applied = applyApprovedSuggestion(suggestion);
+  const { saveSupervisorSuggestions: saveSupervisorSuggestions2 } = (init_supervisor(), __toCommonJS(exports_supervisor));
+  if (applied.ok) {
+    suggestion.status = "applied";
+    suggestion.appliedAt = new Date().toISOString();
+    console.log(`\u2705 Suggestion ${suggestionId} approved and applied`);
+  } else {
+    suggestion.status = "failed";
+    suggestion.error = applied.error;
+    console.error(`\u274C Suggestion ${suggestionId} approved but failed to apply: ${applied.error}`);
+    saveSupervisorSuggestions2(store);
+    process.exit(1);
+  }
+  saveSupervisorSuggestions2(store);
+}
+function handleRejectSuggestionCommand(args) {
+  const rejectSuggestionIdx = args.indexOf("--reject-suggestion");
+  const suggestionId = args[rejectSuggestionIdx + 1];
+  if (!suggestionId) {
+    console.error("Error: --reject-suggestion requires an ID");
+    process.exit(1);
+  }
+  const store = loadSupervisorSuggestions();
+  if (store.parseError) {
+    console.error(`Error: ${store.parseError}`);
+    process.exit(1);
+  }
+  const suggestion = store.suggestions.find((s) => s.id === suggestionId);
+  if (!suggestion) {
+    console.error(`Error: Suggestion not found: ${suggestionId}`);
+    process.exit(1);
+  }
+  if (suggestion.status !== "pending") {
+    console.error(`Error: Suggestion ${suggestionId} is already ${suggestion.status}`);
+    process.exit(1);
+  }
+  suggestion.status = "rejected";
+  suggestion.decidedAt = new Date().toISOString();
+  const { saveSupervisorSuggestions: saveSupervisorSuggestions2 } = (init_supervisor(), __toCommonJS(exports_supervisor));
+  saveSupervisorSuggestions2(store);
+  console.log(`\u2705 Suggestion ${suggestionId} rejected`);
+}
+function handleAddContextCommand(args) {
+  const addContextIdx = args.indexOf("--add-context");
+  const contextText = args[addContextIdx + 1];
+  if (!contextText) {
+    console.error("Error: --add-context requires a text argument");
+    console.error('Usage: ralph --add-context "Your context or hint here"');
+    process.exit(1);
+  }
+  const { appendContext: appendContext2 } = (init_context(), __toCommonJS(exports_context));
+  appendContext2(contextText);
+  const contextPath = getContextPath();
+  console.log(`\u2705 Context added for next iteration`);
+  console.log(`   File: ${contextPath}`);
+  const state = loadState();
+  if (state?.active) {
+    console.log(`   Will be picked up in iteration ${state.iteration + 1}`);
+  } else {
+    console.log(`   Will be used when loop starts`);
+  }
+}
+function handleClearContextCommand() {
+  const contextPath = getContextPath();
+  if (existsSync7(contextPath)) {
+    __require("fs").unlinkSync(contextPath);
+    console.log(`\u2705 Context cleared`);
+  } else {
+    console.log(`\u2139\uFE0F  No pending context to clear`);
+  }
+}
+function handleListTasksCommand() {
+  const tasksPath = getTasksFilePath();
+  if (!existsSync7(tasksPath)) {
+    console.log("No tasks file found. Use --add-task to create your first task.");
+    process.exit(0);
+  }
+  try {
+    const tasks = loadTasks();
+    displayTasksWithIndices(tasks);
+  } catch (error) {
+    console.error("Error reading tasks file:", error);
+    process.exit(1);
+  }
+}
+function handleAddTaskCommand(args) {
+  const addTaskIdx = args.indexOf("--add-task");
+  const taskDescription = args[addTaskIdx + 1];
+  if (!taskDescription) {
+    console.error("Error: --add-task requires a description");
+    console.error('Usage: ralph --add-task "Task description"');
+    process.exit(1);
+  }
+  try {
+    appendTask(taskDescription);
+    console.log(`\u2705 Task added: "${taskDescription}"`);
+  } catch (error) {
+    console.error("Error adding task:", error);
+    process.exit(1);
+  }
+}
+function handleRemoveTaskCommand(args) {
+  const removeTaskIdx = args.indexOf("--remove-task");
+  const taskIndexStr = args[removeTaskIdx + 1];
+  if (!taskIndexStr || isNaN(parseInt(taskIndexStr))) {
+    console.error("Error: --remove-task requires a valid number");
+    console.error("Usage: ralph --remove-task 3");
+    process.exit(1);
+  }
+  const taskIndex = parseInt(taskIndexStr);
+  try {
+    removeTask(taskIndex);
+    console.log(`\u2705 Removed task ${taskIndex} and its subtasks`);
+  } catch (error) {
+    console.error("Error removing task:", error);
+    process.exit(1);
+  }
+}
+
+// src/cli/args.ts
+function buildArgMap(configs) {
+  const map = new Map;
+  for (const config of configs) {
+    map.set(`--${config.name}`, config);
+    if (config.aliases) {
+      for (const alias of config.aliases) {
+        map.set(alias, config);
       }
     }
   }
-  return errors.slice(0, 10);
+  return map;
+}
+function parseValue(value, type, name) {
+  if (type === "boolean") {
+    return value === "true" || value === "1";
+  }
+  if (type === "number") {
+    const parsed = parseInt(value, 10);
+    if (isNaN(parsed)) {
+      throw new Error(`Invalid number value for ${name}: ${value}`);
+    }
+    return parsed;
+  }
+  return value;
+}
+function parseArgs(argList, schema) {
+  const argMap = buildArgMap(schema);
+  const args = {};
+  const promptParts = [];
+  const errors = [];
+  const doubleDashIndex = argList.indexOf("--");
+  const argsToProcess = doubleDashIndex !== -1 ? argList.slice(0, doubleDashIndex) : argList;
+  let i = 0;
+  while (i < argsToProcess.length) {
+    const arg = argsToProcess[i];
+    if (!arg.startsWith("-")) {
+      promptParts.push(arg);
+      i++;
+      continue;
+    }
+    const config = argMap.get(arg);
+    if (!config) {
+      errors.push(`Unknown option: ${arg}`);
+      i++;
+      continue;
+    }
+    const key = config.name;
+    if (config.type === "boolean") {
+      args[key] = true;
+      i++;
+    } else {
+      const nextArg = argsToProcess[i + 1];
+      if (!nextArg) {
+        errors.push(`Option ${arg} requires a value`);
+        i++;
+        continue;
+      }
+      try {
+        args[key] = parseValue(nextArg, config.type, arg);
+        i += 2;
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+        i++;
+      }
+    }
+  }
+  for (const config of schema) {
+    const key = config.name;
+    if (args[key] === undefined) {
+      if (config.default !== undefined) {
+        args[key] = config.default;
+      } else if (config.required) {
+        errors.push(`Required option --${config.name} not provided`);
+      }
+    } else if (config.validate) {
+      const validation = config.validate(args[key]);
+      if (validation !== true) {
+        errors.push(validation || `Invalid value for --${config.name}`);
+      }
+    }
+  }
+  return {
+    args,
+    promptParts,
+    errors
+  };
+}
+function displayHelp(version, schema) {
+  const lines = [
+    `Ralph Wiggum Loop - Iterative AI development with OpenCode`,
+    ``,
+    `Usage:`,
+    `  ralph "<prompt>" [options]`,
+    `  ralph --prompt-file <path> [options]`,
+    ``,
+    `Arguments:`,
+    `  prompt              Task description for the AI to work on`,
+    ``,
+    `Options:`
+  ];
+  for (const config of schema) {
+    const aliases = config.aliases ? config.aliases.join(", ") : "";
+    const flags = [aliases, `--${config.name}`].filter(Boolean).join(", ");
+    const typeLabel = config.type === "boolean" ? "" : ` <${config.type}>`;
+    const defaultLabel = config.default !== undefined ? ` (default: ${config.default})` : "";
+    lines.push(`  ${flags}${typeLabel}    ${config.description || ""}${defaultLabel}`);
+  }
+  lines.push(``, `Commands:`, `  --status            Show current Ralph loop status and history`, `  --status --tasks    Show status including current task list`, `  --add-context TEXT  Add context for the next iteration (or edit .ralph/ralph-context.md)`, `  --clear-context     Clear any pending context`, `  --list-tasks        Display the current task list with indices`, `  --add-task "desc"   Add a new task to the list`, `  --remove-task N     Remove task at index N (including subtasks)`, `  --list-suggestions  Show supervisor suggestions and statuses`, `  --approve-suggestion ID  Approve and apply a pending supervisor suggestion`, `  --reject-suggestion ID   Reject a pending supervisor suggestion`, ``, `Examples:`, `  ralph "Build a REST API for todos"`, `  ralph "Fix the auth bug" --max-iterations 10`, `  ralph "Add tests" --completion-promise "ALL TESTS PASS" --model anthropic/claude-sonnet-4`, `  ralph --prompt-file ./prompt.md --max-iterations 5`, `  ralph --status                                        # Check loop status`, `  ralph --add-context "Focus on the auth module first"  # Add hint for next iteration`, ``, `How it works:`, `  1. Sends your prompt to OpenCode via SDK`, `  2. OpenCode works on the task`, `  3. Checks output for completion promise`, `  4. If not complete, repeats with same prompt`, `  5. OpenCode sees its previous work in files`, `  6. Continues until promise detected or max iterations`, ``, `To stop manually: Ctrl+C`, ``, `Learn more: https://ghuntley.com/ralph/`, ``);
+  console.log(lines.join(`
+`));
+}
+var RALPH_ARGS_SCHEMA = [
+  {
+    name: "model",
+    type: "string",
+    description: "Model to use (e.g., anthropic/claude-sonnet-4)"
+  },
+  {
+    name: "min-iterations",
+    type: "number",
+    description: "Minimum iterations before completion allowed",
+    default: 1,
+    validate: (val) => val >= 0 || "--min-iterations must be non-negative"
+  },
+  {
+    name: "max-iterations",
+    type: "number",
+    description: "Maximum iterations before stopping (0 = unlimited)",
+    default: 0,
+    validate: (val) => val >= 0 || "--max-iterations must be non-negative"
+  },
+  {
+    name: "completion-promise",
+    type: "string",
+    description: "Phrase that signals completion",
+    default: "COMPLETE"
+  },
+  {
+    name: "abort-promise",
+    type: "string",
+    description: "Phrase that signals early abort (e.g., precondition failed)"
+  },
+  {
+    name: "tasks",
+    aliases: ["-t"],
+    type: "boolean",
+    description: "Enable Tasks Mode for structured task tracking"
+  },
+  {
+    name: "task-promise",
+    type: "string",
+    description: "Phrase that signals task completion",
+    default: "READY_FOR_NEXT_TASK"
+  },
+  {
+    name: "supervisor",
+    type: "boolean",
+    description: "Enable post-iteration supervisor loop"
+  },
+  {
+    name: "supervisor-model",
+    type: "string",
+    description: "Supervisor model"
+  },
+  {
+    name: "supervisor-no-action-promise",
+    type: "string",
+    description: "Promise for no-op supervisor run",
+    default: "NO_ACTION_NEEDED"
+  },
+  {
+    name: "supervisor-suggestion-promise",
+    type: "string",
+    description: "Promise when supervisor suggests change",
+    default: "USER_DECISION_REQUIRED"
+  },
+  {
+    name: "supervisor-memory-limit",
+    type: "number",
+    description: "Number of supervisor memory entries to keep",
+    default: 20,
+    validate: (val) => val > 0 || "--supervisor-memory-limit must be greater than 0"
+  },
+  {
+    name: "supervisor-prompt-template",
+    type: "string",
+    description: "Custom prompt template for supervisor"
+  },
+  {
+    name: "prompt-file",
+    aliases: ["--file", "-f"],
+    type: "string",
+    description: "Read prompt content from a file"
+  },
+  {
+    name: "prompt-template",
+    type: "string",
+    description: "Use custom prompt template (supports variables)"
+  },
+  {
+    name: "no-stream",
+    type: "boolean",
+    description: "Buffer output and print at the end"
+  },
+  {
+    name: "verbose-tools",
+    type: "boolean",
+    description: "Print every tool line (disable compact tool summary)"
+  },
+  {
+    name: "no-commit",
+    type: "boolean",
+    description: "Don't auto-commit after each iteration"
+  },
+  {
+    name: "no-plugins",
+    type: "boolean",
+    description: "Disable non-auth OpenCode plugins for this run"
+  },
+  {
+    name: "allow-all",
+    type: "boolean",
+    description: "Auto-approve all tool permissions"
+  },
+  {
+    name: "no-allow-all",
+    type: "boolean",
+    description: "Require interactive permission prompts"
+  }
+];
+
+// ralph.ts
+var __dirname = "/Users/torugo/go/src/github.com/victorhsb/opencode-ralph";
+var VERSION = process.env.npm_package_version || (existsSync8(join3(__dirname, "package.json")) ? JSON.parse(readFileSync8(join3(__dirname, "package.json"), "utf-8")).version : "2.0.1");
+var tasksPath = getTasksPath();
+var args = process.argv.slice(2);
+if (args.includes("--help") || args.includes("-h")) {
+  displayHelp(VERSION, RALPH_ARGS_SCHEMA);
+  process.exit(0);
+}
+if (args.includes("--version") || args.includes("-v")) {
+  console.log(`ralph ${VERSION}`);
+  process.exit(0);
+}
+if (args.includes("--status")) {
+  handleStatusCommand(args);
+  process.exit(0);
+}
+if (args.includes("--list-suggestions")) {
+  handleListSuggestionsCommand();
+  process.exit(0);
+}
+if (args.includes("--approve-suggestion")) {
+  handleApproveSuggestionCommand(args);
+  process.exit(0);
+}
+if (args.includes("--reject-suggestion")) {
+  handleRejectSuggestionCommand(args);
+  process.exit(0);
+}
+if (args.includes("--add-context")) {
+  handleAddContextCommand(args);
+  process.exit(0);
+}
+if (args.includes("--clear-context")) {
+  handleClearContextCommand();
+  process.exit(0);
+}
+if (args.includes("--list-tasks")) {
+  handleListTasksCommand();
+  process.exit(0);
+}
+if (args.includes("--add-task")) {
+  handleAddTaskCommand(args);
+  process.exit(0);
+}
+if (args.includes("--remove-task")) {
+  handleRemoveTaskCommand(args);
+  process.exit(0);
+}
+var parsed = parseArgs(args, RALPH_ARGS_SCHEMA);
+if (parsed.errors.length > 0) {
+  console.error("Error(s) parsing arguments:");
+  for (const error of parsed.errors) {
+    console.error(`  ${error}`);
+  }
+  console.error(`
+Run 'ralph --help' for available options`);
+  process.exit(1);
+}
+var model = parsed.args.model;
+var minIterations = parsed.args["min-iterations"];
+var maxIterations = parsed.args["max-iterations"];
+var completionPromise = parsed.args["completion-promise"];
+var abortPromise = parsed.args["abort-promise"];
+var tasksMode = parsed.args.tasks;
+var taskPromise = parsed.args["task-promise"];
+var supervisorEnabled = parsed.args.supervisor;
+var supervisorModel = parsed.args["supervisor-model"];
+var supervisorNoActionPromise = parsed.args["supervisor-no-action-promise"];
+var supervisorSuggestionPromise = parsed.args["supervisor-suggestion-promise"];
+var supervisorMemoryLimit = parsed.args["supervisor-memory-limit"];
+var supervisorPromptTemplatePath = parsed.args["supervisor-prompt-template"];
+var promptFile = parsed.args["prompt-file"];
+var promptTemplatePath = parsed.args["prompt-template"];
+var noStream = parsed.args["no-stream"];
+var verboseTools = parsed.args["verbose-tools"];
+var noCommit = parsed.args["no-commit"];
+var disablePlugins = parsed.args["no-plugins"];
+var allowAll = parsed.args["allow-all"];
+var noAllowAll = parsed.args["no-allow-all"];
+var autoCommit = !noCommit;
+var streamOutput = !noStream;
+var allowAllPermissions = allowAll && !noAllowAll;
+var promptParts = parsed.promptParts;
+var prompt = "";
+var promptSource = "";
+function readPromptFile(path) {
+  if (!existsSync8(path)) {
+    console.error(`Error: Prompt file not found: ${path}`);
+    process.exit(1);
+  }
+  try {
+    const stat = __require("fs").statSync(path);
+    if (!stat.isFile()) {
+      console.error(`Error: Prompt path is not a file: ${path}`);
+      process.exit(1);
+    }
+  } catch {
+    console.error(`Error: Unable to stat prompt file: ${path}`);
+    process.exit(1);
+  }
+  try {
+    const content = readFileSync8(path, "utf-8");
+    if (!content.trim()) {
+      console.error(`Error: Prompt file is empty: ${path}`);
+      process.exit(1);
+    }
+    return content;
+  } catch {
+    console.error(`Error: Unable to read prompt file: ${path}`);
+    process.exit(1);
+  }
+}
+if (promptFile) {
+  promptSource = promptFile;
+  prompt = readPromptFile(promptFile);
+} else if (promptParts.length === 1 && existsSync8(promptParts[0])) {
+  promptSource = promptParts[0];
+  prompt = readPromptFile(promptParts[0]);
+} else {
+  prompt = promptParts.join(" ");
+}
+if (!prompt) {
+  const existingState = loadState();
+  if (existingState?.active) {
+    prompt = existingState.prompt;
+  } else {
+    console.error("Error: No prompt provided");
+    console.error('Usage: ralph "Your task description" [options]');
+    console.error("Run 'ralph --help' for more information");
+    process.exit(1);
+  }
+}
+if (maxIterations > 0 && minIterations > maxIterations) {
+  console.error(`Error: --min-iterations (${minIterations}) cannot be greater than --max-iterations (${maxIterations})`);
+  process.exit(1);
 }
 async function executeSdkIteration(options) {
   const { client: client3, prompt: prompt2, model: model2, streamOutput: streamOutput2, compactTools } = options;
@@ -2976,17 +3309,19 @@ async function executeSdkIteration(options) {
           if (compactTools) {
             maybePrintToolSummary();
           } else {
-            console.log(`| ${formatEvent(event)}`);
+            console.log(`| ${event.type === "tool_start" ? `\uD83D\uDD27 ${event.toolName}...` : ""}`);
           }
           lastPrintedAt = Date.now();
         }
         if (event.type === "text" && event.content) {
-          console.log(event.content);
+          process.stdout.write(event.content);
           lastPrintedAt = Date.now();
         }
       }
     });
     clearInterval(heartbeatTimer);
+    process.stdout.write(`
+`);
     output = result.output;
     for (const [tool, count] of result.toolCounts) {
       toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + count);
@@ -3036,7 +3371,7 @@ async function runRalphLoop() {
       supervisorMemoryLimit = existingState.supervisor.memoryLimit;
       supervisorPromptTemplatePath = existingState.supervisor.promptTemplate ?? "";
     }
-    console.log(`\uD83D\uDD04 Resuming Ralph loop from ${statePath}`);
+    console.log(`\uD83D\uDD04 Resuming Ralph loop from ${(init_state(), __toCommonJS(exports_state)).getStateDir()}`);
   }
   const initialModel = model;
   const effectiveSupervisorModel = supervisorModel || initialModel;
@@ -3083,14 +3418,8 @@ async function runRalphLoop() {
   if (!resuming) {
     saveState(state);
   }
-  if (tasksMode && !existsSync2(tasksPath)) {
-    if (!existsSync2(stateDir)) {
-      mkdirSync(stateDir, { recursive: true });
-    }
-    writeFileSync(tasksPath, `# Ralph Tasks
-
-Add your tasks below using: \`ralph --add-task "description"\`
-`);
+  if (tasksMode && !existsSync8(tasksPath)) {
+    ensureTasksFile();
     console.log(`\uD83D\uDCCB Created tasks file: ${tasksPath}`);
   }
   const history = resuming ? loadHistory() : {
@@ -3203,7 +3532,7 @@ Gracefully stopping Ralph loop...`);
     const contextAtStart = loadContext();
     const snapshotBefore = await captureFileSnapshot();
     let currentModel = state.model;
-    const fullPrompt = buildPrompt(state);
+    const fullPrompt = buildPrompt(state, promptTemplatePath);
     const iterationStart = Date.now();
     let result = "";
     let stderr = "";
@@ -3294,7 +3623,7 @@ ${stderr}`;
       }
       if (detectPlaceholderPluginError(combinedOutput) || detectSdkPlaceholderPluginError(combinedOutput)) {
         console.error(`
-\u274C OpenCode tried to load the legacy 'ralph-wiggum' plugin. This package is CLI-only.`);
+\u274C OpenCode tried to load legacy 'ralph-wiggum' plugin. This package is CLI-only.`);
         console.error("Remove 'ralph-wiggum' from your opencode.json plugin list, or re-run with --no-plugins.");
         clearState();
         process.exit(1);
@@ -3307,9 +3636,9 @@ ${stderr}`;
    To fix this:`);
         console.error("   1. Set a default model in ~/.config/opencode/opencode.json:");
         console.error('      { "model": "your-provider/model-name" }');
-        console.error('   2. Or use the --model flag: ralph "task" --model provider/model');
+        console.error('   2. Or use --model flag: ralph "task" --model provider/model');
         console.error(`
-   See the OpenCode documentation for available models.`);
+   See OpenCode documentation for available models.`);
         clearState();
         process.exit(1);
       }
@@ -3438,10 +3767,10 @@ ${stderr}`;
       }
       if (autoCommit) {
         try {
-          const status = await $`git status --porcelain`.text();
+          const status = await $2`git status --porcelain`.text();
           if (status.trim()) {
-            await $`git add -A`;
-            await $`git commit -m "Ralph iteration ${state.iteration}: work in progress"`.quiet();
+            await $2`git add -A`;
+            await $2`git commit -m "Ralph iteration ${state.iteration}: work in progress"`.quiet();
             console.log(`\uD83D\uDCDD Auto-committed changes`);
           }
         } catch {}
