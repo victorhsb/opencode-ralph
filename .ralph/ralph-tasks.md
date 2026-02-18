@@ -54,6 +54,6 @@
 
 - [x] **P4-T2: Package & Install Updates** - Update package.json version to 2.0.0, update description, update install.sh and install.ps1 to remove multi-agent checks and note SDK-only requirements.
 
-- [ ] **P4-T3: README Rewrite** - Rewrite header (v2.0.0 notice), prerequisites, installation, quick start, commands, and troubleshooting sections. Add migration guide showing command changes (before/after examples). Remove all agent-specific sections.
+- [x] **P4-T3: README Rewrite** - Rewrite header (v2.0.0 notice), prerequisites, installation, quick start, commands, and troubleshooting sections. Add migration guide showing command changes (before/after examples). Remove all agent-specific sections.
 
 - [ ] **P4-T4: Release Preparation** - Create CHANGELOG.md with v2.0.0 entry documenting breaking changes, removed flags, added SDK features. Create ARCHITECTURE.md (optional). Run comprehensive regression tests and verify all features work.
