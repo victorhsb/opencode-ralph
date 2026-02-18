@@ -10,24 +10,10 @@ if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-# Check for agent CLI (OpenCode, Claude Code, Codex, or Copilot CLI)
-$hasOpenCode = Get-Command opencode -ErrorAction SilentlyContinue
-$hasClaude = Get-Command claude -ErrorAction SilentlyContinue
-$hasCodex = Get-Command codex -ErrorAction SilentlyContinue
-$hasCopilot = Get-Command copilot -ErrorAction SilentlyContinue
-if (-not $hasOpenCode -and -not $hasClaude -and -not $hasCodex -and -not $hasCopilot) {
-  Write-Error "OpenCode, Claude Code, Codex, or Copilot CLI is required but not installed. Install OpenCode: npm install -g opencode-ai. Install Claude Code: https://claude.ai/code. Install Codex: https://developers.openai.com/codex/. Install Copilot CLI: npm install -g @github/copilot"
+# Check for OpenCode CLI (required - SDK-only)
+if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) {
+  Write-Error "OpenCode CLI is required but not installed. Install OpenCode: npm install -g opencode-ai"
   exit 1
-}
-
-if (-not $hasOpenCode) {
-  if ($hasClaude) {
-    Write-Warning "OpenCode not found. Default agent is OpenCode. Use --agent claude-code or install OpenCode."
-  } elseif ($hasCodex) {
-    Write-Warning "OpenCode not found. Default agent is OpenCode. Use --agent codex or install OpenCode."
-  } elseif ($hasCopilot) {
-    Write-Warning "OpenCode not found. Default agent is OpenCode. Use --agent copilot or install OpenCode."
-  }
 }
 
 # Get script directory

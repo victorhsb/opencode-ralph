@@ -12,25 +12,11 @@ if ! command -v bun &> /dev/null; then
     exit 1
 fi
 
-# Check for agent CLI (OpenCode, Claude Code, Codex, or Copilot CLI)
-if ! command -v opencode &> /dev/null && ! command -v claude &> /dev/null && ! command -v codex &> /dev/null && ! command -v copilot &> /dev/null; then
-    echo "Error: OpenCode, Claude Code, Codex, or Copilot CLI is required but not installed."
-    echo "Install OpenCode: npm install -g opencode-ai"
-    echo "Install Claude Code: https://claude.ai/code"
-    echo "Install Codex: https://developers.openai.com/codex/"
-    echo "Install Copilot CLI: npm install -g @github/copilot"
-    exit 1
-fi
-
+# Check for OpenCode CLI (required - SDK-only)
 if ! command -v opencode &> /dev/null; then
-    echo "Warning: OpenCode not found. Default agent is OpenCode."
-    if command -v claude &> /dev/null; then
-        echo "Use --agent claude-code or install OpenCode."
-    elif command -v codex &> /dev/null; then
-        echo "Use --agent codex or install OpenCode."
-    elif command -v copilot &> /dev/null; then
-        echo "Use --agent copilot or install OpenCode."
-    fi
+    echo "Error: OpenCode CLI is required but not installed."
+    echo "Install OpenCode: npm install -g opencode-ai"
+    exit 1
 fi
 
 # Get script directory

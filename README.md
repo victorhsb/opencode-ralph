@@ -204,6 +204,13 @@ Options:
   --tasks, -t              Enable Tasks Mode for structured task tracking
   --task-promise T         Text that signals task completion (default: READY_FOR_NEXT_TASK)
   --model MODEL            Model to use (agent-specific)
+  --supervisor             Enable post-iteration supervisor loop
+  --supervisor-agent AGENT Supervisor agent: opencode, claude-code, codex, copilot
+  --supervisor-model MODEL Supervisor model (agent-specific)
+  --supervisor-no-action-promise TEXT  Promise for no-op supervisor run (default: NO_ACTION_NEEDED)
+  --supervisor-suggestion-promise TEXT Promise for suggested action (default: USER_DECISION_REQUIRED)
+  --supervisor-memory-limit N Number of supervisor memory entries to keep (default: 20)
+  --supervisor-prompt-template PATH Custom supervisor prompt template
   --rotation LIST          Agent/model rotation for each iteration (comma-separated)
   --prompt-file, --file, -f  Read prompt content from a file
   --prompt-template PATH   Use custom prompt template (see Custom Prompts)
@@ -242,6 +249,11 @@ ralph --remove-task 3
 
 # Show status (tasks shown automatically when tasks mode is active)
 ralph --status
+
+# Supervisor suggestion workflow
+ralph --list-suggestions
+ralph --approve-suggestion <id>
+ralph --reject-suggestion <id>
 ```
 
 #### How Tasks Mode Works
@@ -320,6 +332,25 @@ ralph --add-context "Focus on fixing the auth module first"
 # Clear pending context
 ralph --clear-context
 ```
+
+### Supervisor Mode
+
+Enable an overseer agent that runs after each coder iteration, reviews output/state/tasks, and only suggests changes for user approval.
+
+```bash
+ralph "Implement the API and tests" \
+  --supervisor \
+  --supervisor-agent codex \
+  --supervisor-model gpt-5-codex \
+  --max-iterations 20
+```
+
+When supervisor suggests action, Ralph stores it in `.ralph/supervisor-suggestions.json` and prints:
+
+- `ralph --approve-suggestion <id>` to apply suggestion (`add_task` or `add_context`)
+- `ralph --reject-suggestion <id>` to reject it
+
+If completion is detected in the same iteration, Ralph pauses and waits for your decision before exiting.
 
 ### Status Dashboard
 
@@ -611,6 +642,8 @@ During operation, Ralph stores state in `.ralph/`:
 - `ralph-history.json` - Iteration history and metrics
 - `ralph-context.md` - Pending context for next iteration
 - `ralph-tasks.md` - Task list for Tasks Mode (created when `--tasks` is used)
+- `supervisor-suggestions.json` - Supervisor suggestions and approval status
+- `supervisor-memory.md` - Rolling supervisor memory across iterations
 
 ## Uninstall
 

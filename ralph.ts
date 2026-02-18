@@ -10,10 +10,12 @@ import { $ } from "bun";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { join } from "path";
 
-const VERSION = "1.2.1";
+// Import SDK modules
+import { createSdkClient, type SdkClient } from "./src/sdk/client";
+import { executePrompt } from "./src/sdk/executor";
+import { formatEvent } from "./src/sdk/output";
 
-// Detect Windows platform for command resolution
-const IS_WINDOWS = process.platform === "win32";
+const VERSION = "1.2.1";
 
 // Context file path for mid-loop injection
 const stateDir = join(process.cwd(), ".ralph");
@@ -21,159 +23,14 @@ const statePath = join(stateDir, "ralph-loop.state.json");
 const contextPath = join(stateDir, "ralph-context.md");
 const historyPath = join(stateDir, "ralph-history.json");
 const tasksPath = join(stateDir, "ralph-tasks.md");
-
-const AGENT_TYPES = ["opencode", "claude-code", "codex", "copilot"] as const;
-type AgentType = (typeof AGENT_TYPES)[number];
-
-type AgentEnvOptions = { filterPlugins?: boolean; allowAllPermissions?: boolean };
-
-type AgentBuildArgsOptions = { allowAllPermissions?: boolean; extraFlags?: string[]; streamOutput?: boolean };
-
-interface AgentConfig {
-  type: AgentType;
-  command: string;
-  buildArgs: (prompt: string, model: string, options?: AgentBuildArgsOptions) => string[];
-  buildEnv: (options: AgentEnvOptions) => Record<string, string>;
-  parseToolOutput: (line: string) => string | null;
-  configName: string;
-}
-
-/**
- * Resolve a command for cross-platform compatibility.
- * On Windows, many npm-installed CLIs require the .cmd extension.
- */
-function resolveCommand(cmd: string, envOverride?: string): string {
-  if (envOverride) return envOverride;
-  // On Windows, try the .cmd version first if the base command isn't found
-  if (IS_WINDOWS) {
-    const cmdPath = Bun.which(cmd);
-    if (!cmdPath) {
-      const cmdWithExt = `${cmd}.cmd`;
-      const cmdExtPath = Bun.which(cmdWithExt);
-      if (cmdExtPath) return cmdWithExt;
-    }
-  }
-  return cmd;
-}
-
-const AGENTS: Record<AgentType, AgentConfig> = {
-  opencode: {
-    type: "opencode",
-    command: resolveCommand("opencode", process.env.RALPH_OPENCODE_BINARY),
-    buildArgs: (promptText, modelName, options) => {
-      const cmdArgs = ["run"];
-      if (modelName) {
-        cmdArgs.push("-m", modelName);
-      }
-      if (options?.extraFlags && options.extraFlags.length > 0) {
-        cmdArgs.push(...options.extraFlags);
-      }
-      cmdArgs.push(promptText);
-      return cmdArgs;
-    },
-    buildEnv: options => {
-      const env = { ...process.env };
-      if (options.filterPlugins || options.allowAllPermissions) {
-        env.OPENCODE_CONFIG = ensureRalphConfig({
-          filterPlugins: options.filterPlugins,
-          allowAllPermissions: options.allowAllPermissions,
-        });
-      }
-      return env;
-    },
-    parseToolOutput: line => {
-      const match = stripAnsi(line).match(/^\|\s{2}([A-Za-z0-9_-]+)/);
-      return match ? match[1] : null;
-    },
-    configName: "OpenCode",
-  },
-  "claude-code": {
-    type: "claude-code",
-    command: resolveCommand("claude", process.env.RALPH_CLAUDE_BINARY),
-    buildArgs: (promptText, modelName, options) => {
-      const cmdArgs = ["-p", promptText];
-      if (options?.streamOutput) {
-        cmdArgs.push("--output-format", "stream-json", "--include-partial-messages");
-      }
-      if (modelName) {
-        cmdArgs.push("--model", modelName);
-      }
-      if (options?.allowAllPermissions) {
-        cmdArgs.push("--dangerously-skip-permissions");
-      }
-      if (options?.extraFlags && options.extraFlags.length > 0) {
-        cmdArgs.push(...options.extraFlags);
-      }
-      return cmdArgs;
-    },
-    buildEnv: () => ({ ...process.env }),
-    parseToolOutput: line => {
-      const cleanLine = stripAnsi(line);
-      const match = cleanLine.match(/(?:Using|Called|Tool:)\s+([A-Za-z0-9_.-]+)/i);
-      if (match) return match[1];
-      if (/"type"\s*:\s*"tool_use"/.test(cleanLine)) {
-        const nameMatch = cleanLine.match(/"name"\s*:\s*"([^"]+)"/);
-        if (nameMatch) return nameMatch[1];
-      }
-      return null;
-    },
-    configName: "Claude Code",
-  },
-  codex: {
-    type: "codex",
-    command: resolveCommand("codex", process.env.RALPH_CODEX_BINARY),
-    buildArgs: (promptText, modelName, options) => {
-      const cmdArgs = ["exec"];
-      if (modelName) {
-        cmdArgs.push("--model", modelName);
-      }
-      if (options?.allowAllPermissions) {
-        cmdArgs.push("--full-auto");
-      }
-      if (options?.extraFlags && options.extraFlags.length > 0) {
-        cmdArgs.push(...options.extraFlags);
-      }
-      cmdArgs.push(promptText);
-      return cmdArgs;
-    },
-    buildEnv: () => ({ ...process.env }),
-    parseToolOutput: line => {
-      const match = stripAnsi(line).match(/(?:Tool:|Using|Calling|Running)\s+([A-Za-z0-9_-]+)/i);
-      return match ? match[1] : null;
-    },
-    configName: "Codex",
-  },
-  copilot: {
-    type: "copilot",
-    command: resolveCommand("copilot", process.env.RALPH_COPILOT_BINARY),
-    buildArgs: (promptText, modelName, options) => {
-      const cmdArgs = ["-p", promptText];
-      if (modelName) {
-        cmdArgs.push("--model", modelName);
-      }
-      if (options?.allowAllPermissions) {
-        cmdArgs.push("--allow-all", "--no-ask-user");
-      }
-      if (options?.extraFlags && options.extraFlags.length > 0) {
-        cmdArgs.push(...options.extraFlags);
-      }
-      return cmdArgs;
-    },
-    buildEnv: () => ({ ...process.env }),
-    // Provisional regex — needs empirical refinement based on actual Copilot CLI output format
-    parseToolOutput: line => {
-      const match = stripAnsi(line).match(/(?:Tool:|Using|Called|Running)\s+([A-Za-z0-9_-]+)/i);
-      return match ? match[1] : null;
-    },
-    configName: "Copilot CLI",
-  },
-};
+const supervisorMemoryPath = join(stateDir, "supervisor-memory.md");
+const supervisorSuggestionsPath = join(stateDir, "supervisor-suggestions.json");
 // Parse arguments
 const args = process.argv.slice(2);
 
 if (args.includes("--help") || args.includes("-h")) {
   console.log(`
-Ralph Wiggum Loop - Iterative AI development with AI agents
+Ralph Wiggum Loop - Iterative AI development with OpenCode
 
 Usage:
   ralph "<prompt>" [options]
@@ -183,30 +40,29 @@ Arguments:
   prompt              Task description for the AI to work on
 
 Options:
-  --agent AGENT       AI agent to use: opencode (default), claude-code, codex, copilot
+  --model MODEL       Model to use (e.g., anthropic/claude-sonnet-4)
   --min-iterations N  Minimum iterations before completion allowed (default: 1)
   --max-iterations N  Maximum iterations before stopping (default: unlimited)
   --completion-promise TEXT  Phrase that signals completion (default: COMPLETE)
   --abort-promise TEXT  Phrase that signals early abort (e.g., precondition failed)
   --tasks, -t         Enable Tasks Mode for structured task tracking
   --task-promise TEXT Phrase that signals task completion (default: READY_FOR_NEXT_TASK)
-  --model MODEL       Model to use (agent-specific, e.g., anthropic/claude-sonnet)
-  --rotation LIST     Agent/model rotation for each iteration (comma-separated)
-                      Each entry must be "agent:model" format
-                      Valid agents: opencode, claude-code, codex
-                      Example: --rotation "opencode:claude-sonnet-4,claude-code:gpt-4o"
-                      When used, --agent and --model are ignored
+  --supervisor       Enable post-iteration supervisor loop
+  --supervisor-model MODEL  Supervisor model
+  --supervisor-no-action-promise TEXT  Promise for no-op supervisor run (default: NO_ACTION_NEEDED)
+  --supervisor-suggestion-promise TEXT Promise when supervisor suggests change (default: USER_DECISION_REQUIRED)
+  --supervisor-memory-limit N  Number of supervisor memory entries to keep (default: 20)
+  --supervisor-prompt-template PATH  Custom prompt template for supervisor
   --prompt-file, --file, -f  Read prompt content from a file
   --prompt-template PATH  Use custom prompt template (supports variables)
-  --no-stream         Buffer agent output and print at the end
+  --no-stream         Buffer output and print at the end
   --verbose-tools     Print every tool line (disable compact tool summary)
-  --no-plugins        Disable non-auth OpenCode plugins for this run (opencode only)
+  --no-plugins        Disable non-auth OpenCode plugins for this run
   --no-commit         Don't auto-commit after each iteration
   --allow-all         Auto-approve all tool permissions (default: on)
   --no-allow-all      Require interactive permission prompts
   --version, -v       Show version
   --help, -h          Show this help
-  --                  Pass all remaining arguments to the agent (e.g., -- --extra-tags)
 
 Commands:
   --status            Show current Ralph loop status and history
@@ -216,23 +72,24 @@ Commands:
   --list-tasks        Display the current task list with indices
   --add-task "desc"   Add a new task to the list
   --remove-task N     Remove task at index N (including subtasks)
+  --list-suggestions  Show supervisor suggestions and statuses
+  --approve-suggestion ID  Approve and apply a pending supervisor suggestion
+  --reject-suggestion ID   Reject a pending supervisor suggestion
 
 Examples:
   ralph "Build a REST API for todos"
   ralph "Fix the auth bug" --max-iterations 10
-  ralph "Add tests" --completion-promise "ALL TESTS PASS" --model openai/gpt-5.1
-  ralph "Fix the bug" --agent codex --model gpt-5-codex
+  ralph "Add tests" --completion-promise "ALL TESTS PASS" --model anthropic/claude-sonnet-4
   ralph --prompt-file ./prompt.md --max-iterations 5
   ralph --status                                        # Check loop status
   ralph --add-context "Focus on the auth module first"  # Add hint for next iteration
-  ralph "Build API" -- --agent build                    # Pass flags to the agent
 
 How it works:
-  1. Sends your prompt to the selected AI agent
-  2. AI agent works on the task
+  1. Sends your prompt to OpenCode via SDK
+  2. OpenCode works on the task
   3. Checks output for completion promise
   4. If not complete, repeats with same prompt
-  5. AI sees its previous work in files
+  5. OpenCode sees its previous work in files
   6. Continues until promise detected or max iterations
 
 To stop manually: Ctrl+C
@@ -253,7 +110,6 @@ interface IterationHistory {
   startedAt: string;
   endedAt: string;
   durationMs: number;
-  agent: AgentType;
   model: string;
   toolsUsed: Record<string, number>;
   filesModified: string[];
@@ -270,6 +126,61 @@ interface RalphHistory {
     noProgressIterations: number;
     shortIterations: number;
   };
+}
+
+interface SupervisorConfig {
+  enabled: boolean;
+  model: string;
+  noActionPromise: string;
+  suggestionPromise: string;
+  memoryLimit: number;
+  promptTemplate?: string;
+}
+
+interface SupervisorState {
+  enabled: boolean;
+  pausedForDecision: boolean;
+  pauseIteration?: number;
+  pauseReason?: string;
+  lastRunAt?: string;
+  lastRunIteration?: number;
+}
+
+type SupervisorSuggestionKind = "add_task" | "add_context";
+type SupervisorSuggestionStatus = "pending" | "approved" | "applied" | "rejected" | "failed";
+
+interface SupervisorSuggestion {
+  id: string;
+  iteration: number;
+  kind: SupervisorSuggestionKind;
+  title: string;
+  details: string;
+  proposedChanges: Record<string, string>;
+  status: SupervisorSuggestionStatus;
+  createdAt: string;
+  decidedAt?: string;
+  appliedAt?: string;
+  error?: string;
+}
+
+interface SupervisorSuggestionsStore {
+  suggestions: SupervisorSuggestion[];
+  parseError?: string;
+}
+
+interface SupervisorMemoryEntry {
+  iteration: number;
+  summary: string;
+  decision: string;
+  timestamp: string;
+}
+
+interface SupervisorRunResult {
+  ok: boolean;
+  noAction: boolean;
+  suggestion?: Omit<SupervisorSuggestion, "id" | "status" | "createdAt">;
+  rawOutput: string;
+  error?: string;
 }
 
 // Load history
@@ -307,11 +218,168 @@ function clearHistory(): void {
   }
 }
 
+function ensureStateDir(): void {
+  if (!existsSync(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+}
+
+function loadSupervisorSuggestions(path = supervisorSuggestionsPath): SupervisorSuggestionsStore {
+  if (!existsSync(path)) {
+    return { suggestions: [] };
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8"));
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.suggestions)) {
+      return { suggestions: [] };
+    }
+    const suggestions = parsed.suggestions.filter((item: unknown) => item && typeof item === "object") as SupervisorSuggestion[];
+    return { suggestions };
+  } catch {
+    return { suggestions: [], parseError: `Could not parse suggestions file at ${path}` };
+  }
+}
+
+function saveSupervisorSuggestions(store: SupervisorSuggestionsStore, path = supervisorSuggestionsPath): void {
+  ensureStateDir();
+  writeFileSync(path, JSON.stringify(store, null, 2));
+}
+
+function parseSupervisorMemory(path = supervisorMemoryPath): SupervisorMemoryEntry[] {
+  if (!existsSync(path)) return [];
+  const content = readFileSync(path, "utf-8").trim();
+  if (!content) return [];
+  const sections = content.split(/\n(?=## )/g);
+  const entries: SupervisorMemoryEntry[] = [];
+
+  for (const section of sections) {
+    const lines = section.split("\n");
+    if (!lines[0]?.startsWith("## ")) continue;
+    const header = lines[0].replace(/^##\s+/, "").trim();
+    const headerMatch = header.match(/^(.+?)\s+\|\s+Iteration\s+(\d+)$/i);
+    if (!headerMatch) continue;
+    const timestamp = headerMatch[1].trim();
+    const iteration = parseInt(headerMatch[2], 10);
+    const summaryLine = lines.find(line => line.startsWith("- Summary: "));
+    const decisionLine = lines.find(line => line.startsWith("- Decision: "));
+    if (!summaryLine || !decisionLine || Number.isNaN(iteration)) continue;
+    entries.push({
+      iteration,
+      summary: summaryLine.replace("- Summary: ", "").trim(),
+      decision: decisionLine.replace("- Decision: ", "").trim(),
+      timestamp,
+    });
+  }
+  return entries;
+}
+
+function saveSupervisorMemory(entries: SupervisorMemoryEntry[], path = supervisorMemoryPath): void {
+  ensureStateDir();
+  const content = [
+    "# Supervisor Memory",
+    "",
+    ...entries.flatMap(entry => [
+      `## ${entry.timestamp} | Iteration ${entry.iteration}`,
+      `- Summary: ${entry.summary}`,
+      `- Decision: ${entry.decision}`,
+      "",
+    ]),
+  ].join("\n").trimEnd() + "\n";
+  writeFileSync(path, content);
+}
+
+function appendSupervisorMemory(
+  entry: SupervisorMemoryEntry,
+  memoryLimit: number,
+  path = supervisorMemoryPath,
+): void {
+  const existing = parseSupervisorMemory(path);
+  const boundedLimit = Number.isFinite(memoryLimit) && memoryLimit > 0 ? Math.floor(memoryLimit) : 20;
+  const next = [...existing, entry].slice(-boundedLimit);
+  saveSupervisorMemory(next, path);
+}
+
+function buildSupervisorSuggestionId(iteration: number): string {
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `sup-${iteration}-${Date.now()}-${rand}`;
+}
+
+function truncateForPrompt(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 20))}\n...[truncated]`;
+}
+
+function appendContextEntry(contextText: string): void {
+  ensureStateDir();
+  const timestamp = new Date().toISOString();
+  const newEntry = `\n## Context added at ${timestamp}\n${contextText}\n`;
+
+  if (existsSync(contextPath)) {
+    const existing = readFileSync(contextPath, "utf-8");
+    writeFileSync(contextPath, existing + newEntry);
+  } else {
+    writeFileSync(contextPath, `# Ralph Loop Context\n${newEntry}`);
+  }
+}
+
+function appendTaskEntry(taskDescription: string): void {
+  ensureStateDir();
+  let tasksContent = "";
+  if (existsSync(tasksPath)) {
+    tasksContent = readFileSync(tasksPath, "utf-8");
+  } else {
+    tasksContent = "# Ralph Tasks\n\n";
+  }
+  const newTaskContent = tasksContent.trimEnd() + "\n" + `- [ ] ${taskDescription}\n`;
+  writeFileSync(tasksPath, newTaskContent);
+}
+
+function displaySupervisorSuggestions(store: SupervisorSuggestionsStore): void {
+  if (store.suggestions.length === 0) {
+    console.log("No supervisor suggestions found.");
+    return;
+  }
+  console.log("Supervisor suggestions:");
+  for (const suggestion of store.suggestions) {
+    console.log(`- ${suggestion.id} [${suggestion.status}] iteration ${suggestion.iteration}`);
+    console.log(`  ${suggestion.kind}: ${suggestion.title}`);
+    if (suggestion.details) {
+      console.log(`  details: ${suggestion.details}`);
+    }
+  }
+}
+
+function applyApprovedSuggestion(suggestion: SupervisorSuggestion): { ok: boolean; error?: string } {
+  try {
+    if (suggestion.kind === "add_task") {
+      const taskText = suggestion.proposedChanges.task ?? suggestion.details;
+      if (!taskText?.trim()) {
+        return { ok: false, error: "missing task text in suggestion payload" };
+      }
+      appendTaskEntry(taskText.trim());
+      return { ok: true };
+    }
+    if (suggestion.kind === "add_context") {
+      const contextText = suggestion.proposedChanges.context ?? suggestion.details;
+      if (!contextText?.trim()) {
+        return { ok: false, error: "missing context text in suggestion payload" };
+      }
+      appendContextEntry(contextText.trim());
+      return { ok: true };
+    }
+    return { ok: false, error: `unsupported suggestion kind: ${suggestion.kind}` };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
 // Status command
 if (args.includes("--status")) {
   const state = loadState();
   const history = loadHistory();
   const context = existsSync(contextPath) ? readFileSync(contextPath, "utf-8").trim() : null;
+  const supervisorSuggestions = loadSupervisorSuggestions();
+  const pendingSuggestions = supervisorSuggestions.suggestions.filter(s => s.status === "pending").length;
   // Show tasks if explicitly requested OR if active loop has tasks mode enabled
   const showTasks = args.includes("--tasks") || args.includes("-t") || state?.tasksMode;
 
@@ -329,26 +397,21 @@ if (args.includes("--status")) {
     console.log(`   Started:      ${state.startedAt}`);
     console.log(`   Elapsed:      ${elapsedStr}`);
     console.log(`   Promise:      ${state.completionPromise}`);
-    const rotationActive = !!(state.rotation && state.rotation.length > 0);
-    if (!rotationActive) {
-      const agentLabel = state.agent ? (AGENTS[state.agent]?.configName ?? state.agent) : "OpenCode";
-      console.log(`   Agent:        ${agentLabel}`);
-      if (state.model) console.log(`   Model:        ${state.model}`);
-    }
+    if (state.model) console.log(`   Model:        ${state.model}`);
     if (state.tasksMode) {
       console.log(`   Tasks Mode:   ENABLED`);
       console.log(`   Task Promise: ${state.taskPromise}`);
     }
     console.log(`   Prompt:       ${state.prompt.substring(0, 60)}${state.prompt.length > 60 ? "..." : ""}`);
-    if (rotationActive) {
-      const activeIndex = state.rotation && state.rotation.length > 0
-        ? ((state.rotationIndex ?? 0) % state.rotation.length + state.rotation.length) % state.rotation.length
-        : 0;
-      console.log(`\n   Rotation (position ${activeIndex + 1}/${state.rotation.length}):`);
-      state.rotation.forEach((entry, index) => {
-        const activeLabel = index === activeIndex ? "  **ACTIVE**" : "";
-        console.log(`   ${index + 1}. ${entry}${activeLabel}`);
-      });
+    if (state.supervisor?.enabled) {
+      console.log(`   Supervisor:   ENABLED`);
+      if (state.supervisor.model) {
+        console.log(`   Sup Model:    ${state.supervisor.model}`);
+      }
+      console.log(`   Sup Pending:  ${pendingSuggestions}`);
+      if (state.supervisorState?.pausedForDecision) {
+        console.log(`   Sup Status:   waiting for user decision`);
+      }
     }
   } else {
     console.log(`⏹️  No active loop`);
@@ -357,6 +420,10 @@ if (args.includes("--status")) {
   if (context) {
     console.log(`\n📝 PENDING CONTEXT (will be injected next iteration):`);
     console.log(`   ${context.split("\n").join("\n   ")}`);
+  }
+
+  if (supervisorSuggestions.parseError) {
+    console.log(`\n⚠️  SUPERVISOR DATA WARNING: ${supervisorSuggestions.parseError}`);
   }
 
   // Show tasks if requested
@@ -404,10 +471,8 @@ if (args.includes("--status")) {
         .slice(0, 3)
         .map(([k, v]) => `${k}(${v})`)
         .join(" ");
-      const agentLabel = iter.agent ?? "unknown";
       const modelLabel = iter.model ?? "unknown";
-      const agentModel = `${agentLabel} / ${modelLabel}`;
-      console.log(`   #${iter.iteration}  ${formatDurationLong(iter.durationMs)}  ${agentModel}  ${tools || "no tools"}`);
+      console.log(`   #${iter.iteration}  ${formatDurationLong(iter.durationMs)}  ${modelLabel}  ${tools || "no tools"}`);
     }
 
     // Struggle detection
@@ -436,6 +501,83 @@ if (args.includes("--status")) {
   process.exit(0);
 }
 
+if (args.includes("--list-suggestions")) {
+  const store = loadSupervisorSuggestions();
+  if (store.parseError) {
+    console.error(`Error: ${store.parseError}`);
+    process.exit(1);
+  }
+  displaySupervisorSuggestions(store);
+  process.exit(0);
+}
+
+const approveSuggestionIdx = args.indexOf("--approve-suggestion");
+if (approveSuggestionIdx !== -1) {
+  const suggestionId = args[approveSuggestionIdx + 1];
+  if (!suggestionId) {
+    console.error("Error: --approve-suggestion requires an ID");
+    process.exit(1);
+  }
+  const store = loadSupervisorSuggestions();
+  if (store.parseError) {
+    console.error(`Error: ${store.parseError}`);
+    process.exit(1);
+  }
+  const suggestion = store.suggestions.find(s => s.id === suggestionId);
+  if (!suggestion) {
+    console.error(`Error: Suggestion not found: ${suggestionId}`);
+    process.exit(1);
+  }
+  if (suggestion.status !== "pending") {
+    console.error(`Error: Suggestion ${suggestionId} is already ${suggestion.status}`);
+    process.exit(1);
+  }
+  suggestion.status = "approved";
+  suggestion.decidedAt = new Date().toISOString();
+  const applied = applyApprovedSuggestion(suggestion);
+  if (applied.ok) {
+    suggestion.status = "applied";
+    suggestion.appliedAt = new Date().toISOString();
+    console.log(`✅ Suggestion ${suggestionId} approved and applied`);
+  } else {
+    suggestion.status = "failed";
+    suggestion.error = applied.error;
+    console.error(`❌ Suggestion ${suggestionId} approved but failed to apply: ${applied.error}`);
+    saveSupervisorSuggestions(store);
+    process.exit(1);
+  }
+  saveSupervisorSuggestions(store);
+  process.exit(0);
+}
+
+const rejectSuggestionIdx = args.indexOf("--reject-suggestion");
+if (rejectSuggestionIdx !== -1) {
+  const suggestionId = args[rejectSuggestionIdx + 1];
+  if (!suggestionId) {
+    console.error("Error: --reject-suggestion requires an ID");
+    process.exit(1);
+  }
+  const store = loadSupervisorSuggestions();
+  if (store.parseError) {
+    console.error(`Error: ${store.parseError}`);
+    process.exit(1);
+  }
+  const suggestion = store.suggestions.find(s => s.id === suggestionId);
+  if (!suggestion) {
+    console.error(`Error: Suggestion not found: ${suggestionId}`);
+    process.exit(1);
+  }
+  if (suggestion.status !== "pending") {
+    console.error(`Error: Suggestion ${suggestionId} is already ${suggestion.status}`);
+    process.exit(1);
+  }
+  suggestion.status = "rejected";
+  suggestion.decidedAt = new Date().toISOString();
+  saveSupervisorSuggestions(store);
+  console.log(`✅ Suggestion ${suggestionId} rejected`);
+  process.exit(0);
+}
+
 // Add context command
 const addContextIdx = args.indexOf("--add-context");
 if (addContextIdx !== -1) {
@@ -446,20 +588,7 @@ if (addContextIdx !== -1) {
     process.exit(1);
   }
 
-  if (!existsSync(stateDir)) {
-    mkdirSync(stateDir, { recursive: true });
-  }
-
-  // Append to existing context or create new
-  const timestamp = new Date().toISOString();
-  const newEntry = `\n## Context added at ${timestamp}\n${contextText}\n`;
-
-  if (existsSync(contextPath)) {
-    const existing = readFileSync(contextPath, "utf-8");
-    writeFileSync(contextPath, existing + newEntry);
-  } else {
-    writeFileSync(contextPath, `# Ralph Loop Context\n${newEntry}`);
-  }
+  appendContextEntry(contextText);
 
   console.log(`✅ Context added for next iteration`);
   console.log(`   File: ${contextPath}`);
@@ -512,20 +641,8 @@ if (addTaskIdx !== -1) {
     process.exit(1);
   }
 
-  if (!existsSync(stateDir)) {
-    mkdirSync(stateDir, { recursive: true });
-  }
-
   try {
-    let tasksContent = "";
-    if (existsSync(tasksPath)) {
-      tasksContent = readFileSync(tasksPath, "utf-8");
-    } else {
-      tasksContent = "# Ralph Tasks\n\n";
-    }
-
-    const newTaskContent = tasksContent.trimEnd() + "\n" + `- [ ] ${taskDescription}\n`;
-    writeFileSync(tasksPath, newTaskContent);
+    appendTaskEntry(taskDescription);
     console.log(`✅ Task added: "${taskDescription}"`);
   } catch (error) {
     console.error("Error adding task:", error);
@@ -712,9 +829,6 @@ let abortPromise = ""; // Optional abort promise for early exit on precondition 
 let tasksMode = false;
 let taskPromise = "READY_FOR_NEXT_TASK";
 let model = "";
-let agentType: AgentType = "opencode";
-let rotationInput = "";
-let rotation: string[] | null = null;
 let autoCommit = true;
 let disablePlugins = false;
 let allowAllPermissions = true;
@@ -723,6 +837,13 @@ let promptTemplatePath = ""; // Custom prompt template file
 let streamOutput = true;
 let verboseTools = false;
 let promptSource = "";
+let supervisorEnabled = false;
+let supervisorModel = "";
+let supervisorNoActionPromise = "NO_ACTION_NEEDED";
+let supervisorSuggestionPromise = "USER_DECISION_REQUIRED";
+let supervisorMemoryLimit = 20;
+let supervisorPromptTemplatePath = "";
+let supervisorOptionsTouched = false;
 
 const promptParts: string[] = [];
 let extraAgentFlags: string[] = [];
@@ -735,43 +856,10 @@ if (doubleDashIndex !== -1) {
   args.splice(doubleDashIndex);
 }
 
-function parseRotationInput(raw: string): string[] {
-  const entries = raw.split(",").map(entry => entry.trim());
-  const parsed: string[] = [];
-  for (const entry of entries) {
-    const parts = entry.split(":");
-    if (parts.length !== 2) {
-      console.error(`Error: Invalid rotation entry '${entry}'. Expected format: agent:model`);
-      process.exit(1);
-    }
-    const agent = parts[0].trim();
-    const modelName = parts[1].trim();
-    if (!agent || !modelName) {
-      console.error(`Error: Invalid rotation entry '${entry}'. Both agent and model are required.`);
-      process.exit(1);
-    }
-    if (!AGENT_TYPES.includes(agent as AgentType)) {
-      console.error(
-        `Error: Invalid agent '${agent}' in rotation entry '${entry}'. Valid agents: ${AGENT_TYPES.join(", ")}`,
-      );
-      process.exit(1);
-    }
-    parsed.push(`${agent}:${modelName}`);
-  }
-  return parsed;
-}
-
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
 
-  if (arg === "--agent") {
-    const val = args[++i];
-    if (!val || !AGENT_TYPES.includes(val as AgentType)) {
-      console.error("Error: --agent requires: 'opencode', 'claude-code', 'codex', or 'copilot'");
-      process.exit(1);
-    }
-    agentType = val as AgentType;
-  } else if (arg === "--min-iterations") {
+  if (arg === "--min-iterations") {
     const val = args[++i];
     if (!val || isNaN(parseInt(val))) {
       console.error("Error: --min-iterations requires a number");
@@ -808,13 +896,6 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     taskPromise = val;
-  } else if (arg === "--rotation") {
-    const val = args[++i];
-    if (!val) {
-      console.error("Error: --rotation requires a value");
-      process.exit(1);
-    }
-    rotationInput = val;
   } else if (arg === "--model") {
     const val = args[++i];
     if (!val) {
@@ -822,6 +903,53 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     model = val;
+  } else if (arg === "--supervisor") {
+    supervisorEnabled = true;
+    supervisorOptionsTouched = true;
+  } else if (arg === "--supervisor-model") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --supervisor-model requires a value");
+      process.exit(1);
+    }
+    supervisorModel = val;
+    supervisorOptionsTouched = true;
+  } else if (arg === "--supervisor-no-action-promise") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --supervisor-no-action-promise requires a value");
+      process.exit(1);
+    }
+    supervisorNoActionPromise = val;
+    supervisorOptionsTouched = true;
+  } else if (arg === "--supervisor-suggestion-promise") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --supervisor-suggestion-promise requires a value");
+      process.exit(1);
+    }
+    supervisorSuggestionPromise = val;
+    supervisorOptionsTouched = true;
+  } else if (arg === "--supervisor-memory-limit") {
+    const val = args[++i];
+    if (!val || isNaN(parseInt(val))) {
+      console.error("Error: --supervisor-memory-limit requires a number");
+      process.exit(1);
+    }
+    supervisorMemoryLimit = parseInt(val, 10);
+    if (supervisorMemoryLimit <= 0) {
+      console.error("Error: --supervisor-memory-limit must be greater than 0");
+      process.exit(1);
+    }
+    supervisorOptionsTouched = true;
+  } else if (arg === "--supervisor-prompt-template") {
+    const val = args[++i];
+    if (!val) {
+      console.error("Error: --supervisor-prompt-template requires a file path");
+      process.exit(1);
+    }
+    supervisorPromptTemplatePath = val;
+    supervisorOptionsTouched = true;
   } else if (arg === "--prompt-file" || arg === "--file" || arg === "-f") {
     const val = args[++i];
     if (!val) {
@@ -859,11 +987,8 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-if (rotationInput) {
-  rotation = parseRotationInput(rotationInput);
-} else if (!AGENT_TYPES.includes(agentType)) {
-  console.error("Error: --agent requires: 'opencode', 'claude-code', or 'codex'");
-  process.exit(1);
+if (supervisorOptionsTouched) {
+  supervisorEnabled = true;
 }
 
 function readPromptFile(path: string): string {
@@ -935,9 +1060,8 @@ interface RalphState {
   promptTemplate?: string; // Custom prompt template path
   startedAt: string;
   model: string;
-  agent: AgentType;
-  rotation?: string[];
-  rotationIndex?: number;
+  supervisor?: SupervisorConfig;
+  supervisorState?: SupervisorState;
 }
 
 // Create or update state
@@ -964,80 +1088,6 @@ function clearState(): void {
     try {
       require("fs").unlinkSync(statePath);
     } catch {}
-  }
-}
-
-function loadPluginsFromConfig(configPath: string): string[] {
-  if (!existsSync(configPath)) {
-    return [];
-  }
-  try {
-    const raw = readFileSync(configPath, "utf-8");
-    // Basic JSONC support: strip // and /* */ comments.
-    const withoutBlock = raw.replace(/\/\*[\s\S]*?\*\//g, "");
-    const withoutLine = withoutBlock.replace(/^\s*\/\/.*$/gm, "");
-    const parsed = JSON.parse(withoutLine);
-    const plugins = parsed?.plugin;
-    return Array.isArray(plugins) ? plugins.filter(p => typeof p === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function ensureRalphConfig(options: { filterPlugins?: boolean; allowAllPermissions?: boolean }): string {
-  if (!existsSync(stateDir)) {
-    mkdirSync(stateDir, { recursive: true });
-  }
-  const configPath = join(stateDir, "ralph-opencode.config.json");
-  const userConfigPath = join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"), "opencode", "opencode.json");
-  const projectConfigPath = join(process.cwd(), ".ralph", "opencode.json");
-  const legacyProjectConfigPath = join(process.cwd(), ".opencode", "opencode.json");
-
-  const config: Record<string, unknown> = {
-    $schema: "https://opencode.ai/config.json",
-  };
-
-  // Filter plugins if requested (only keep auth plugins)
-  if (options.filterPlugins) {
-    const plugins = [
-      ...loadPluginsFromConfig(userConfigPath),
-      ...loadPluginsFromConfig(projectConfigPath),
-      ...loadPluginsFromConfig(legacyProjectConfigPath),
-    ];
-    config.plugin = Array.from(new Set(plugins)).filter(p => /auth/i.test(p));
-  }
-
-  // Auto-allow all permissions for non-interactive use
-  if (options.allowAllPermissions) {
-    config.permission = {
-      read: "allow",
-      edit: "allow",
-      glob: "allow",
-      grep: "allow",
-      list: "allow",
-      bash: "allow",
-      task: "allow",
-      webfetch: "allow",
-      websearch: "allow",
-      codesearch: "allow",
-      todowrite: "allow",
-      todoread: "allow",
-      question: "allow",
-      lsp: "allow",
-      external_directory: "allow",
-    };
-  }
-
-  writeFileSync(configPath, JSON.stringify(config, null, 2));
-  return configPath;
-}
-
-async function validateAgent(agent: AgentConfig): Promise<void> {
-  // Use Bun.which() for cross-platform executable detection (works on Windows, macOS, Linux)
-  const path = Bun.which(agent.command);
-  if (!path) {
-    console.error(`Error: ${agent.configName} CLI ('${agent.command}') not found.`);
-    process.exit(1);
   }
 }
 
@@ -1115,9 +1165,8 @@ function loadCustomPromptTemplate(templatePath: string, state: RalphState): stri
 /**
  * Build the prompt for the current iteration.
  * @param state - Current loop state
- * @param _agent - Agent config (reserved for future agent-specific prompt customization)
  */
-function buildPrompt(state: RalphState, _agent: AgentConfig): string {
+function buildPrompt(state: RalphState): string {
   // Use custom template if provided
   if (promptTemplatePath) {
     const customPrompt = loadCustomPromptTemplate(promptTemplatePath, state);
@@ -1197,6 +1246,261 @@ ${state.prompt}
 
 Now, work on the task. Good luck!
 `.trim();
+}
+
+function loadCustomSupervisorPromptTemplate(
+  templatePath: string,
+  state: RalphState,
+  coderOutput: string,
+  history: RalphHistory,
+): string | null {
+  if (!existsSync(templatePath)) {
+    console.error(`Error: Supervisor prompt template not found: ${templatePath}`);
+    process.exit(1);
+  }
+  const context = loadContext() || "";
+  const tasksContent = existsSync(tasksPath) ? readFileSync(tasksPath, "utf-8") : "";
+  const memoryEntries = parseSupervisorMemory().slice(-10);
+  const memoryText = memoryEntries.map(m => `${m.timestamp} [iter ${m.iteration}] ${m.summary} (${m.decision})`).join("\n");
+
+  let template = readFileSync(templatePath, "utf-8");
+  template = template
+    .replace(/\{\{iteration\}\}/g, String(state.iteration))
+    .replace(/\{\{prompt\}\}/g, state.prompt)
+    .replace(/\{\{coder_output\}\}/g, coderOutput)
+    .replace(/\{\{context\}\}/g, context)
+    .replace(/\{\{tasks\}\}/g, tasksContent)
+    .replace(/\{\{supervisor_memory\}\}/g, memoryText)
+    .replace(/\{\{no_progress_iterations\}\}/g, String(history.struggleIndicators.noProgressIterations))
+    .replace(/\{\{short_iterations\}\}/g, String(history.struggleIndicators.shortIterations));
+  return template;
+}
+
+function buildSupervisorPrompt(
+  state: RalphState,
+  supervisorConfig: SupervisorConfig,
+  coderOutput: string,
+  history: RalphHistory,
+): string {
+  if (supervisorConfig.promptTemplate) {
+    const template = loadCustomSupervisorPromptTemplate(supervisorConfig.promptTemplate, state, coderOutput, history);
+    if (template) return template;
+  }
+  const context = loadContext() || "(none)";
+  const tasksContent = existsSync(tasksPath) ? readFileSync(tasksPath, "utf-8") : "(no tasks file)";
+  const memoryEntries = parseSupervisorMemory().slice(-10);
+  const memoryText = memoryEntries.length > 0
+    ? memoryEntries.map(m => `- ${m.timestamp} (iteration ${m.iteration}): ${m.summary} | ${m.decision}`).join("\n")
+    : "- no prior supervisor memory";
+  const truncatedOutput = truncateForPrompt(coderOutput, 6000);
+
+  return `
+# Ralph Supervisor - Iteration ${state.iteration}
+
+You are supervising a coding agent loop. Review the latest coder execution and suggest improvements if needed.
+You must not modify files or take actions. You can only communicate recommendations to the user.
+
+## Supervisor Protocol (strict)
+
+If no action is needed, output exactly:
+<promise>${supervisorConfig.noActionPromise}</promise>
+
+If action is needed, output:
+<promise>${supervisorConfig.suggestionPromise}</promise>
+<supervisor_suggestion>{"kind":"add_task"|"add_context","title":"...","details":"...","proposedChanges":{"task":"..."} or {"context":"..."}}</supervisor_suggestion>
+
+Only allowed kinds: add_task, add_context.
+Return exactly one suggestion block when suggesting action.
+
+## User Prompt
+${state.prompt}
+
+## Current Context
+${context}
+
+## Current Tasks
+\`\`\`markdown
+${tasksContent}
+\`\`\`
+
+## Recent Supervisor Memory
+${memoryText}
+
+## Latest Coder Output
+\`\`\`
+${truncatedOutput}
+\`\`\`
+
+## Struggle Signals
+- no progress iterations: ${history.struggleIndicators.noProgressIterations}
+- short iterations: ${history.struggleIndicators.shortIterations}
+`.trim();
+}
+
+function parseSupervisorOutput(
+  output: string,
+  noActionPromise: string,
+  suggestionPromise: string,
+  iteration: number,
+): SupervisorRunResult {
+  const noActionDetected = checkCompletion(output, noActionPromise);
+  const suggestionDetected = checkCompletion(output, suggestionPromise);
+
+  if (noActionDetected && !suggestionDetected) {
+    return { ok: true, noAction: true, rawOutput: output };
+  }
+  if (!suggestionDetected) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: output,
+      error: "supervisor output missing required promise tag",
+    };
+  }
+
+  const match = output.match(/<supervisor_suggestion>\s*([\s\S]*?)\s*<\/supervisor_suggestion>/i);
+  if (!match) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: output,
+      error: "suggestion promise found, but missing <supervisor_suggestion> JSON block",
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(match[1]);
+    const kind = parsed?.kind;
+    const title = typeof parsed?.title === "string" ? parsed.title.trim() : "";
+    const details = typeof parsed?.details === "string" ? parsed.details.trim() : "";
+    const proposedChanges = parsed?.proposedChanges && typeof parsed.proposedChanges === "object"
+      ? parsed.proposedChanges as Record<string, string>
+      : {};
+
+    if (kind !== "add_task" && kind !== "add_context") {
+      return { ok: false, noAction: false, rawOutput: output, error: `invalid suggestion kind: ${String(kind)}` };
+    }
+    if (!title) {
+      return { ok: false, noAction: false, rawOutput: output, error: "suggestion title is required" };
+    }
+    if (kind === "add_task" && !proposedChanges.task?.trim()) {
+      return { ok: false, noAction: false, rawOutput: output, error: "add_task suggestion requires proposedChanges.task" };
+    }
+    if (kind === "add_context" && !proposedChanges.context?.trim()) {
+      return { ok: false, noAction: false, rawOutput: output, error: "add_context suggestion requires proposedChanges.context" };
+    }
+
+    return {
+      ok: true,
+      noAction: false,
+      rawOutput: output,
+      suggestion: {
+        iteration,
+        kind,
+        title,
+        details,
+        proposedChanges,
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: output,
+      error: `invalid supervisor suggestion JSON: ${String(error)}`,
+    };
+  }
+}
+
+async function runSupervisorOnce(
+  state: RalphState,
+  supervisorConfig: SupervisorConfig,
+  history: RalphHistory,
+  coderOutput: string,
+  sdkClient: SdkClient,
+): Promise<SupervisorRunResult> {
+  try {
+    const supervisorPrompt = buildSupervisorPrompt(state, supervisorConfig, coderOutput, history);
+    
+    // SDK execution path (only path supported)
+    const result = await executePrompt({
+      client: sdkClient.client,
+      prompt: supervisorPrompt,
+      model: supervisorConfig.model,
+      onEvent: (event) => {
+        // Supervisor events - only display in verbose mode
+        if (verboseTools) {
+          const formatted = formatEvent(event);
+          if (formatted) console.log(`| [Supervisor] ${formatted}`);
+        }
+      },
+    });
+    
+    if (!result.success) {
+      return {
+        ok: false,
+        noAction: false,
+        rawOutput: result.output,
+        error: result.errors.join("; ") || "SDK execution failed",
+      };
+    }
+    
+    return parseSupervisorOutput(
+      result.output,
+      supervisorConfig.noActionPromise,
+      supervisorConfig.suggestionPromise,
+      state.iteration,
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: "",
+      error: String(error),
+    };
+  }
+}
+
+async function waitForSupervisorDecisionIfNeeded(
+  state: RalphState,
+  iteration: number,
+): Promise<{ approvedAppliedCount: number }> {
+  let printedHint = false;
+  while (true) {
+    const store = loadSupervisorSuggestions();
+    if (store.parseError) {
+      if (!printedHint) {
+        console.warn(`⚠️  ${store.parseError}`);
+        console.warn("   Fix the file or reject pending suggestions once readable.");
+        printedHint = true;
+      }
+      await new Promise(r => setTimeout(r, 2000));
+      continue;
+    }
+    const pending = store.suggestions.filter(s => s.iteration === iteration && s.status === "pending");
+    if (pending.length === 0) {
+      const approvedApplied = store.suggestions.filter(
+        s => s.iteration === iteration && (s.status === "approved" || s.status === "applied"),
+      ).length;
+      state.supervisorState = {
+        ...(state.supervisorState ?? { enabled: true, pausedForDecision: false }),
+        pausedForDecision: false,
+        pauseIteration: undefined,
+        pauseReason: undefined,
+      };
+      saveState(state);
+      return { approvedAppliedCount: approvedApplied };
+    }
+    if (!printedHint) {
+      console.log("⏸️  Waiting for supervisor decision...");
+      for (const item of pending) {
+        console.log(`   - Approve: ralph --approve-suggestion ${item.id}`);
+        console.log(`   - Reject:  ralph --reject-suggestion ${item.id}`);
+      }
+      printedHint = true;
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
 }
 
 // Generate the tasks mode section for the prompt
@@ -1336,77 +1640,117 @@ function detectModelNotFoundError(output: string): boolean {
          output.includes("No model configured");
 }
 
-function stripAnsi(input: string): string {
-  return input.replace(/\x1B\[[0-9;]*m/g, "");
+/**
+ * Check if an error is an SDK-specific error that should trigger retry logic.
+ * SDK errors come from the OpenCode SDK client, not from subprocess output.
+ *
+ * @param error - The error to check (can be any type from catch block)
+ * @returns True if this is an SDK error that requires special handling
+ */
+function isSdkError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    // Provider/model related errors
+    if (msg.includes("providermodelfound") ||
+        msg.includes("model not found") ||
+        msg.includes("provider returned error") ||
+        msg.includes("invalid model") ||
+        msg.includes("model configuration")) {
+      return true;
+    }
+    // Connection/server errors
+    if (msg.includes("connection refused") ||
+        msg.includes("network error") ||
+        msg.includes("timeout") ||
+        msg.includes("econnrefused") ||
+        msg.includes("socket hang up")) {
+      return true;
+    }
+    // SDK initialization errors
+    if (msg.includes("failed to initialize") ||
+        msg.includes("sdk initialization") ||
+        msg.includes("server failed to start")) {
+      return true;
+    }
+    // Rate limit errors
+    if (msg.includes("rate limit") ||
+        msg.includes("too many requests") ||
+        msg.includes("throttled")) {
+      return true;
+    }
+    // Authentication errors
+    if (msg.includes("authentication") ||
+        msg.includes("unauthorized") ||
+        msg.includes("api key")) {
+      return true;
+    }
+  }
+  return false;
 }
 
-function extractClaudeStreamDisplayLines(rawLine: string): string[] {
-  const cleanLine = stripAnsi(rawLine).trim();
-  if (!cleanLine.startsWith("{")) {
-    return [rawLine];
+/**
+ * Extract a readable error message from an SDK error.
+ * Handles various error types gracefully.
+ *
+ * @param error - The error to extract message from
+ * @returns A user-friendly error message string
+ */
+function getSdkErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
   }
-
-  let payload: unknown;
-  try {
-    payload = JSON.parse(cleanLine);
-  } catch {
-    return [rawLine];
+  if (typeof error === "string") {
+    return error;
   }
-  if (!payload || typeof payload !== "object") {
-    return [];
-  }
-
-  const lines: string[] = [];
-  const addText = (value: unknown) => {
-    if (typeof value !== "string") return;
-    for (const splitLine of value.split(/\r?\n/)) {
-      const trimmed = splitLine.trim();
-      if (trimmed) lines.push(trimmed);
+  if (error && typeof error === "object") {
+    // Try to extract message from common error object shapes
+    const err = error as Record<string, unknown>;
+    if (typeof err.message === "string") {
+      return err.message;
     }
-  };
-  const addContentText = (content: unknown) => {
-    if (typeof content === "string") {
-      addText(content);
-      return;
+    if (typeof err.error === "string") {
+      return err.error;
     }
-    if (!Array.isArray(content)) return;
-    for (const block of content) {
-      if (!block || typeof block !== "object") continue;
-      const blockRecord = block as Record<string, unknown>;
-      if (blockRecord.type === "tool_use") continue;
-      addText(blockRecord.text);
-      addText(blockRecord.thinking);
-      if (typeof blockRecord.content === "string") {
-        addText(blockRecord.content);
-      }
+    if (typeof err.description === "string") {
+      return err.description;
     }
-  };
-
-  const payloadRecord = payload as Record<string, unknown>;
-  const payloadType = typeof payloadRecord.type === "string" ? payloadRecord.type : "";
-  if (payloadType === "assistant") {
-    if (payloadRecord.message && typeof payloadRecord.message === "object") {
-      const message = payloadRecord.message as Record<string, unknown>;
-      addContentText(message.content);
-    }
-    if (payloadRecord.delta && typeof payloadRecord.delta === "object") {
-      const delta = payloadRecord.delta as Record<string, unknown>;
-      addText(delta.text);
-      addText(delta.thinking);
-      addText(delta.content);
-    }
-  } else if (payloadType === "result") {
-    addText(payloadRecord.result);
-  } else if (payloadType === "error") {
-    if (payloadRecord.error && typeof payloadRecord.error === "object") {
-      const error = payloadRecord.error as Record<string, unknown>;
-      addText(error.message);
-    } else {
-      addText(payloadRecord.error);
+    // Return JSON representation as last resort
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "Unknown SDK error (could not stringify)";
     }
   }
+  return String(error);
+}
 
-  return lines;
+/**
+ * Detect if SDK output contains model not found error.
+ * This complements isSdkError by checking SDK result output.
+ *
+ * @param output - The output text from SDK execution
+ * @returns True if model not found error is detected
+ */
+function detectSdkModelNotFoundError(output: string): boolean {
+  const lowerOutput = output.toLowerCase();
+  return lowerOutput.includes("providermodelfound") ||
+         lowerOutput.includes("model not found") ||
+         lowerOutput.includes("provider returned error") ||
+         lowerOutput.includes("no model configured");
+}
+
+/**
+ * Detect if SDK output contains placeholder plugin error.
+ *
+ * @param output - The output text from SDK execution
+ * @returns True if placeholder plugin error is detected
+ */
+function detectSdkPlaceholderPluginError(output: string): boolean {
+  return output.includes("ralph-wiggum is not yet ready for use");
+}
+
+function stripAnsi(input: string): string {
+  return input.replace(/\x1B\[[0-9;]*m/g, "");
 }
 
 function formatDuration(ms: number): string {
@@ -1432,34 +1776,21 @@ function formatToolSummary(toolCounts: Map<string, number>, maxItems = 6): strin
   return parts.join(" • ");
 }
 
-function collectToolSummaryFromText(text: string, agent: AgentConfig): Map<string, number> {
-  const counts = new Map<string, number>();
-  const lines = text.split(/\r?\n/);
-  for (const line of lines) {
-    const tool = agent.parseToolOutput(line);
-    if (tool) {
-      counts.set(tool, (counts.get(tool) ?? 0) + 1);
-    }
-  }
-  return counts;
-}
-
 function printIterationSummary(params: {
   iteration: number;
   elapsedMs: number;
   toolCounts: Map<string, number>;
   exitCode: number;
   completionDetected: boolean;
-  agent: AgentType;
   model: string;
 }): void {
   const toolSummary = formatToolSummary(params.toolCounts);
   const duration = formatDuration(params.elapsedMs);
-  console.log(`Iteration ${params.iteration} completed in ${duration} (${params.agent} / ${params.model})`);
+  console.log(`Iteration ${params.iteration} completed in ${duration} (${params.model})`);
   console.log("\nIteration Summary");
   console.log("────────────────────────────────────────────────────────────────────");
   console.log(`Iteration: ${params.iteration}`);
-  console.log(`Elapsed:   ${duration} (${params.agent} / ${params.model})`);
+  console.log(`Elapsed:   ${duration} (${params.model})`);
   if (toolSummary) {
     console.log(`Tools:     ${toolSummary}`);
   } else {
@@ -1469,137 +1800,6 @@ function printIterationSummary(params: {
   console.log(`Completion promise: ${params.completionDetected ? "detected" : "not detected"}`);
 }
 
-async function streamProcessOutput(
-  proc: ReturnType<typeof Bun.spawn>,
-  options: {
-    compactTools: boolean;
-    toolSummaryIntervalMs: number;
-    heartbeatIntervalMs: number;
-    iterationStart: number;
-    agent: AgentConfig;
-  },
-): Promise<{ stdoutText: string; stderrText: string; toolCounts: Map<string, number> }> {
-  const toolCounts = new Map<string, number>();
-  let stdoutText = "";
-  let stderrText = "";
-  let lastPrintedAt = Date.now();
-  let lastActivityAt = Date.now();
-  let lastToolSummaryAt = 0;
-
-  const compactTools = options.compactTools;
-  const parseToolOutput = options.agent.parseToolOutput;
-
-  const maybePrintToolSummary = (force = false) => {
-    if (!compactTools || toolCounts.size === 0) return;
-    const now = Date.now();
-    if (!force && now - lastToolSummaryAt < options.toolSummaryIntervalMs) {
-      return;
-    }
-    const summary = formatToolSummary(toolCounts);
-    if (summary) {
-      console.log(`| Tools    ${summary}`);
-      lastPrintedAt = Date.now();
-      lastToolSummaryAt = Date.now();
-    }
-  };
-
-  const handleLine = (line: string, isError: boolean) => {
-    lastActivityAt = Date.now();
-    const tool = parseToolOutput(line);
-    const outputLines = options.agent.type === "claude-code" ? extractClaudeStreamDisplayLines(line) : [line];
-    if (tool) {
-      toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + 1);
-      if (compactTools && outputLines.length === 0) {
-        maybePrintToolSummary();
-        return;
-      }
-    }
-
-    for (const outputLine of outputLines) {
-      if (outputLine.length === 0) {
-        console.log("");
-        lastPrintedAt = Date.now();
-        continue;
-      }
-      if (isError) {
-        console.error(outputLine);
-      } else {
-        console.log(outputLine);
-      }
-      lastPrintedAt = Date.now();
-    }
-  };
-
-  const streamText = async (
-    stream: ReadableStream<Uint8Array> | null,
-    onText: (chunk: string) => void,
-    isError: boolean,
-  ) => {
-    if (!stream) return;
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const text = decoder.decode(value, { stream: true });
-      if (text.length > 0) {
-        onText(text);
-        buffer += text;
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          handleLine(line, isError);
-        }
-      }
-    }
-    const flushed = decoder.decode();
-    if (flushed.length > 0) {
-      onText(flushed);
-      buffer += flushed;
-    }
-    if (buffer.length > 0) {
-      handleLine(buffer, isError);
-    }
-  };
-
-  const heartbeatTimer = setInterval(() => {
-    const now = Date.now();
-    if (now - lastPrintedAt >= options.heartbeatIntervalMs) {
-      const elapsed = formatDuration(now - options.iterationStart);
-      const sinceActivity = formatDuration(now - lastActivityAt);
-      console.log(`⏳ working... elapsed ${elapsed} · last activity ${sinceActivity} ago`);
-      lastPrintedAt = now;
-    }
-  }, options.heartbeatIntervalMs);
-
-  try {
-    await Promise.all([
-      streamText(
-        proc.stdout,
-        chunk => {
-          stdoutText += chunk;
-        },
-        false,
-      ),
-      streamText(
-        proc.stderr,
-        chunk => {
-          stderrText += chunk;
-        },
-        true,
-      ),
-    ]);
-  } finally {
-    clearInterval(heartbeatTimer);
-  }
-
-  if (compactTools) {
-    maybePrintToolSummary(true);
-  }
-
-  return { stdoutText, stderrText, toolCounts };
-}
 // Main loop
 // Helper to detect per-iteration file changes using content hashes
 // Works correctly with --no-commit by comparing file content hashes
@@ -1691,6 +1891,138 @@ function extractErrors(output: string): string[] {
   return errors.slice(0, 10); // Cap at 10 errors per iteration
 }
 
+/**
+ * SDK Iteration Options
+ */
+interface SdkIterationOptions {
+  client: SdkClient;
+  prompt: string;
+  model?: string;
+  streamOutput: boolean;
+  compactTools: boolean;
+}
+
+/**
+ * SDK Iteration Result
+ */
+interface SdkIterationResult {
+  output: string;
+  toolCounts: Map<string, number>;
+  exitCode: number;
+  errors: string[];
+}
+
+/**
+ * Execute a single iteration using the SDK.
+ *
+ * This wrapper function encapsulates the SDK execution logic,
+ * handling event streaming, tool tracking, and output formatting.
+ *
+ * @param options - Configuration for the iteration
+ * @returns Execution result with output, tools, exit code, and errors
+ */
+async function executeSdkIteration(options: SdkIterationOptions): Promise<SdkIterationResult> {
+  const { client, prompt, model, streamOutput, compactTools } = options;
+  
+  const toolCounts = new Map<string, number>();
+  const errors: string[] = [];
+  let output = "";
+  
+  // Track display timing
+  let lastPrintedAt = Date.now();
+  let lastToolSummaryAt = 0;
+  const toolSummaryIntervalMs = 3000;
+  const heartbeatIntervalMs = 10000;
+  
+  // Tool summary printer (matches subprocess format)
+  const maybePrintToolSummary = (force = false) => {
+    if (!compactTools || toolCounts.size === 0) return;
+    const now = Date.now();
+    if (!force && now - lastToolSummaryAt < toolSummaryIntervalMs) {
+      return;
+    }
+    const summary = formatToolSummary(toolCounts);
+    if (summary) {
+      console.log(`| Tools    ${summary}`);
+      lastPrintedAt = now;
+      lastToolSummaryAt = now;
+    }
+  };
+  
+  // Heartbeat for activity indication
+  const heartbeatTimer = setInterval(() => {
+    const now = Date.now();
+    if (now - lastPrintedAt >= heartbeatIntervalMs) {
+      console.log("| ...");
+      lastPrintedAt = now;
+    }
+  }, heartbeatIntervalMs);
+  
+  try {
+    const result = await executePrompt({
+      client: client.client,
+      prompt,
+      model,
+      onEvent: (event) => {
+        if (!streamOutput) return;
+        
+        // Track tools
+        if (event.type === "tool_start" && event.toolName) {
+          toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
+          if (compactTools) {
+            maybePrintToolSummary();
+          } else {
+            console.log(`| ${formatEvent(event)}`);
+          }
+          lastPrintedAt = Date.now();
+        }
+        
+        // Only display text events in streaming mode (not thinking/tool events)
+        if (event.type === "text" && event.content) {
+          console.log(event.content);
+          lastPrintedAt = Date.now();
+        }
+      },
+    });
+    
+    clearInterval(heartbeatTimer);
+    
+    output = result.output;
+    
+    // Merge tool counts from SDK with locally tracked counts
+    for (const [tool, count] of result.toolCounts) {
+      toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + count);
+    }
+    
+    // Collect any errors from the result
+    if (result.errors.length > 0) {
+      errors.push(...result.errors);
+    }
+    
+    // Print final tool summary in compact mode
+    if (compactTools) {
+      maybePrintToolSummary(true);
+    }
+    
+    return {
+      output,
+      toolCounts,
+      exitCode: result.exitCode,
+      errors,
+    };
+  } catch (error) {
+    clearInterval(heartbeatTimer);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(errorMessage);
+    return {
+      output,
+      toolCounts,
+      exitCode: 1,
+      errors,
+    };
+  }
+}
+
 async function runRalphLoop(): Promise<void> {
   // Check if a loop is already running
   const existingState = loadState();
@@ -1705,44 +2037,32 @@ async function runRalphLoop(): Promise<void> {
     prompt = existingState.prompt;
     promptTemplatePath = existingState.promptTemplate ?? "";
     model = existingState.model;
-    agentType = existingState.agent;
-    rotation = existingState.rotation ?? null;
+    if (existingState.supervisor) {
+      supervisorEnabled = existingState.supervisor.enabled;
+      supervisorModel = existingState.supervisor.model;
+      supervisorNoActionPromise = existingState.supervisor.noActionPromise;
+      supervisorSuggestionPromise = existingState.supervisor.suggestionPromise;
+      supervisorMemoryLimit = existingState.supervisor.memoryLimit;
+      supervisorPromptTemplatePath = existingState.supervisor.promptTemplate ?? "";
+    }
     console.log(`🔄 Resuming Ralph loop from ${statePath}`);
   }
 
-  const runtimeRotation = rotation ?? null;
-  const rotationActive = !!(runtimeRotation && runtimeRotation.length > 0);
-  const rotationIndex = rotationActive
-    ? ((existingState?.rotationIndex ?? 0) % runtimeRotation.length + runtimeRotation.length) % runtimeRotation.length
-    : 0;
-  const initialEntry = rotationActive ? runtimeRotation[rotationIndex].split(":") : null;
-  const initialAgentType = rotationActive ? (initialEntry![0] as AgentType) : agentType;
-  const initialModel = rotationActive ? initialEntry![1] : model;
-
-  if (rotationActive) {
-    const uniqueAgents = Array.from(new Set(runtimeRotation!.map(entry => entry.split(":")[0]))) as AgentType[];
-    for (const agent of uniqueAgents) {
-      await validateAgent(AGENTS[agent]);
-    }
-  } else {
-    await validateAgent(AGENTS[initialAgentType]);
-  }
-
-  const agentConfig = AGENTS[initialAgentType];
-  if (disablePlugins && agentConfig.type === "claude-code") {
-    console.warn("Warning: --no-plugins has no effect with Claude Code agent");
-  }
-  if (disablePlugins && agentConfig.type === "codex") {
-    console.warn("Warning: --no-plugins has no effect with Codex agent");
-  }
-  if (disablePlugins && agentConfig.type === "copilot") {
-    console.warn("Warning: --no-plugins has no effect with Copilot CLI agent");
-  }
+  const initialModel = model;
+  const effectiveSupervisorModel = supervisorModel || initialModel;
+  const supervisorConfig: SupervisorConfig = {
+    enabled: supervisorEnabled,
+    model: effectiveSupervisorModel,
+    noActionPromise: supervisorNoActionPromise,
+    suggestionPromise: supervisorSuggestionPromise,
+    memoryLimit: supervisorMemoryLimit,
+    promptTemplate: supervisorPromptTemplatePath || undefined,
+  };
 
   console.log(`
 ╔══════════════════════════════════════════════════════════════════╗
 ║                    Ralph Wiggum Loop                            ║
-║         Iterative AI Development with ${agentConfig.configName.padEnd(20, " ")}        ║
+║         Iterative AI Development with OpenCode                    ║
 ╚══════════════════════════════════════════════════════════════════╝
 `);
 
@@ -1760,10 +2080,20 @@ async function runRalphLoop(): Promise<void> {
     promptTemplate: promptTemplatePath || undefined,
     startedAt: new Date().toISOString(),
     model: initialModel,
-    agent: initialAgentType,
-    rotation: rotation ?? undefined,
-    rotationIndex: rotationActive ? 0 : undefined,
+    supervisor: supervisorConfig,
+    supervisorState: {
+      enabled: supervisorConfig.enabled,
+      pausedForDecision: false,
+    },
   };
+
+  if (resuming && existingState) {
+    state.supervisor = supervisorConfig;
+    state.supervisorState = existingState.supervisorState ?? {
+      enabled: supervisorConfig.enabled,
+      pausedForDecision: false,
+    };
+  }
 
   if (!resuming) {
     saveState(state);
@@ -1793,8 +2123,7 @@ async function runRalphLoop(): Promise<void> {
     console.log(`Task: ${promptSource}`);
     console.log(`Preview: ${promptPreview}`);
   } else {
-    console.log(`Task: ${promptPreview}`);
-  }
+  console.log(`Task: ${promptPreview}`);
   console.log(`Completion promise: ${completionPromise}`);
   if (tasksMode) {
     console.log(`Tasks mode: ENABLED`);
@@ -1802,9 +2131,11 @@ async function runRalphLoop(): Promise<void> {
   }
   console.log(`Min iterations: ${minIterations}`);
   console.log(`Max iterations: ${maxIterations > 0 ? maxIterations : "unlimited"}`);
-  console.log(`Agent: ${agentConfig.configName}`);
   if (initialModel) console.log(`Model: ${initialModel}`);
-  if (disablePlugins && agentConfig.type === "opencode") {
+  if (supervisorConfig.enabled) {
+    console.log(`Supervisor: ENABLED${supervisorConfig.model ? ` / ${supervisorConfig.model}` : ""}`);
+  }
+  if (disablePlugins) {
     console.log("OpenCode plugins: non-auth plugins disabled");
   }
   if (allowAllPermissions) console.log("Permissions: auto-approve all tools");
@@ -1812,8 +2143,22 @@ async function runRalphLoop(): Promise<void> {
   console.log("Starting loop... (Ctrl+C to stop)");
   console.log("═".repeat(68));
 
-  // Track current subprocess for cleanup on SIGINT
-  let currentProc: ReturnType<typeof Bun.spawn> | null = null;
+  // Initialize SDK client (default execution path)
+  // SDK is initialized once at loop start and reused for all iterations
+  let sdkClient: SdkClient | null = null;
+  try {
+    console.log("🚀 Initializing OpenCode SDK...");
+    sdkClient = await createSdkClient({
+      model: initialModel || undefined,
+      filterPlugins: disablePlugins,
+      allowAllPermissions: allowAllPermissions,
+    });
+    console.log(`✅ SDK client ready (${sdkClient.server.url})`);
+  } catch (error) {
+    console.error("❌ Failed to initialize SDK client:", error);
+    console.error("SDK initialization failed. Please ensure OpenCode is properly installed and configured.");
+    process.exit(1);
+  }
 
   // Set up signal handler for graceful shutdown
   let stopping = false;
@@ -1825,12 +2170,13 @@ async function runRalphLoop(): Promise<void> {
     stopping = true;
     console.log("\nGracefully stopping Ralph loop...");
 
-    // Kill the subprocess if it's running
-    if (currentProc) {
+    // Clean up SDK server if initialized
+    if (sdkClient) {
       try {
-        currentProc.kill();
+        console.log("🧹 Closing SDK server...");
+        sdkClient.server.close();
       } catch {
-        // Process may have already exited
+        // Server may have already closed
       }
     }
 
@@ -1838,6 +2184,29 @@ async function runRalphLoop(): Promise<void> {
     console.log("Loop cancelled.");
     process.exit(0);
   });
+
+  if (state.supervisorState?.pausedForDecision && state.supervisorState.pauseIteration) {
+    console.log(`⏸️  Resuming in supervisor-decision wait mode (iteration ${state.supervisorState.pauseIteration})`);
+    const pausedIteration = state.supervisorState.pauseIteration;
+    const decisionResult = await waitForSupervisorDecisionIfNeeded(state, pausedIteration);
+    if (state.supervisorState.pauseReason === "completion_detected_with_pending_supervisor_suggestion") {
+      if (decisionResult.approvedAppliedCount > 0) {
+        console.log("🔄 Supervisor-approved changes were applied while paused. Continuing loop.");
+        state.iteration++;
+        saveState(state);
+      } else {
+        console.log(`\n╔══════════════════════════════════════════════════════════════════╗`);
+        console.log(`║  ✅ Completion promise confirmed after supervisor decisions`);
+        console.log(`║  Task completed in ${state.iteration} iteration(s)`);
+        console.log(`║  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+        console.log(`╚══════════════════════════════════════════════════════════════════╝`);
+        clearState();
+        clearHistory();
+        clearContext();
+        return;
+      }
+    }
+  }
 
   // Main loop
   while (true) {
@@ -1863,76 +2232,38 @@ async function runRalphLoop(): Promise<void> {
     // Capture git state before iteration to detect per-iteration changes
     const snapshotBefore = await captureFileSnapshot();
 
-    const usingRotation = !!(state.rotation && state.rotation.length > 0);
-    const rotationIndex = usingRotation
-      ? ((state.rotationIndex ?? 0) % state.rotation.length + state.rotation.length) % state.rotation.length
-      : 0;
-    let currentAgent: AgentType = state.agent;
     let currentModel = state.model;
-    if (usingRotation) {
-      const entry = state.rotation[rotationIndex];
-      const [entryAgent, entryModel] = entry.split(":");
-      currentAgent = entryAgent as AgentType;
-      currentModel = entryModel;
-    }
-    const agentConfig = AGENTS[currentAgent];
 
-    // Build the prompt
-    const fullPrompt = buildPrompt(state, agentConfig);
+    // Build prompt
+    const fullPrompt = buildPrompt(state);
     const iterationStart = Date.now();
 
+    let result = "";
+    let stderr = "";
+    let toolCounts = new Map<string, number>();
+    let exitCode = 0;
+
     try {
-      // Build command arguments (permission flags are handled inside buildArgs)
-      const cmdArgs = agentConfig.buildArgs(fullPrompt, currentModel, {
-        allowAllPermissions,
-        extraFlags: extraAgentFlags,
+      // SDK execution path (only path supported)
+      console.log("🚀 Using OpenCode SDK for execution...");
+
+      const sdkResult = await executeSdkIteration({
+        client: sdkClient!,
+        prompt: fullPrompt,
+        model: currentModel,
         streamOutput,
+        compactTools: !verboseTools,
       });
 
-      const env = agentConfig.buildEnv({
-        filterPlugins: disablePlugins,
-        allowAllPermissions: allowAllPermissions,
-      });
+      result = sdkResult.output;
+      toolCounts = sdkResult.toolCounts;
+      exitCode = sdkResult.exitCode;
+      stderr = sdkResult.errors.join("\n");
 
-      // Run agent using spawn for better argument handling
-      // stdin is inherited so users can respond to permission prompts if needed
-      currentProc = Bun.spawn([agentConfig.command, ...cmdArgs], {
-        env,
-        stdin: "inherit",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const proc = currentProc;
-      const exitCodePromise = proc.exited;
-      let result = "";
-      let stderr = "";
-      let toolCounts = new Map<string, number>();
-
-      if (streamOutput) {
-        const streamed = await streamProcessOutput(proc, {
-          compactTools: !verboseTools,
-          toolSummaryIntervalMs: 3000,
-          heartbeatIntervalMs: 10000,
-          iterationStart,
-          agent: agentConfig,
-        });
-        result = streamed.stdoutText;
-        stderr = streamed.stderrText;
-        toolCounts = streamed.toolCounts;
-      } else {
-        const stdoutPromise = new Response(proc.stdout).text();
-        const stderrPromise = new Response(proc.stderr).text();
-        [result, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
-        toolCounts = collectToolSummaryFromText(`${result}\n${stderr}`, agentConfig);
+      if (stderr && !streamOutput) {
+        console.error(stderr);
       }
-
-      const exitCode = await exitCodePromise;
-      currentProc = null; // Clear reference after subprocess completes
-
-      if (!streamOutput) {
-        if (stderr) {
-          console.error(stderr);
-        }
+      if (result && !streamOutput) {
         console.log(result);
       }
 
@@ -1940,6 +2271,7 @@ async function runRalphLoop(): Promise<void> {
       const completionDetected = checkCompletion(combinedOutput, completionPromise);
       const abortDetected = abortPromise ? checkCompletion(combinedOutput, abortPromise) : false;
       const taskCompletionDetected = tasksMode ? checkCompletion(combinedOutput, taskPromise) : false;
+      let shouldComplete = completionDetected;
 
       const iterationDuration = Date.now() - iterationStart;
 
@@ -1949,7 +2281,6 @@ async function runRalphLoop(): Promise<void> {
         toolCounts,
         exitCode,
         completionDetected,
-        agent: currentAgent,
         model: currentModel,
       });
 
@@ -1963,7 +2294,6 @@ async function runRalphLoop(): Promise<void> {
         startedAt: new Date(iterationStart).toISOString(),
         endedAt: new Date().toISOString(),
         durationMs: iterationDuration,
-        agent: currentAgent,
         model: currentModel,
         toolsUsed: Object.fromEntries(toolCounts),
         filesModified,
@@ -2013,7 +2343,7 @@ async function runRalphLoop(): Promise<void> {
         console.log(`   💡 Tip: Use 'ralph --add-context "hint"' in another terminal to guide the agent`);
       }
 
-      if (currentAgent === "opencode" && detectPlaceholderPluginError(combinedOutput)) {
+      if (detectPlaceholderPluginError(combinedOutput) || detectSdkPlaceholderPluginError(combinedOutput)) {
         console.error(
           "\n❌ OpenCode tried to load the legacy 'ralph-wiggum' plugin. This package is CLI-only.",
         );
@@ -2025,25 +2355,111 @@ async function runRalphLoop(): Promise<void> {
       }
 
       // Detect model configuration errors (Issues #22, #23)
-      if (detectModelNotFoundError(combinedOutput)) {
+      if (detectSdkModelNotFoundError(combinedOutput)) {
         console.error("\n❌ Model configuration error detected.");
         console.error("   The agent could not find a valid model to use.");
         console.error("\n   To fix this:");
-        if (currentAgent === "opencode") {
-          console.error("   1. Set a default model in ~/.config/opencode/opencode.json:");
-          console.error('      { "model": "your-provider/model-name" }');
-          console.error("   2. Or use the --model flag: ralph \"task\" --model provider/model");
-        } else {
-          console.error(`   1. Use the --model flag: ralph \"task\" --agent ${currentAgent} --model model-name`);
-          console.error("   2. Or configure the default model in the agent's settings");
-        }
-        console.error("\n   See the agent's documentation for available models.");
+        console.error("   1. Set a default model in ~/.config/opencode/opencode.json:");
+        console.error('      { "model": "your-provider/model-name" }');
+        console.error("   2. Or use the --model flag: ralph \"task\" --model provider/model");
+        console.error("\n   See the OpenCode documentation for available models.");
         clearState();
         process.exit(1);
       }
 
       if (exitCode !== 0) {
-        console.warn(`\n⚠️  ${agentConfig.configName} exited with code ${exitCode}. Continuing to next iteration.`);
+        console.warn(`\n⚠️  OpenCode exited with code ${exitCode}. Continuing to next iteration.`);
+      }
+
+      const supervisorCfg = state.supervisor;
+      if (supervisorCfg?.enabled) {
+        if (!sdkClient) {
+          console.warn("⚠️  Supervisor mode requires SDK client. Skipping supervisor run.");
+        } else {
+          console.log(`\n🕵️  Running supervisor${supervisorCfg.model ? ` / ${supervisorCfg.model}` : ""}...`);
+          const supervisorResult = await runSupervisorOnce(state, supervisorCfg, history, combinedOutput, sdkClient);
+        const lastRunAt = new Date().toISOString();
+        state.supervisorState = {
+          ...(state.supervisorState ?? { enabled: true, pausedForDecision: false }),
+          enabled: true,
+          lastRunAt,
+          lastRunIteration: state.iteration,
+        };
+
+        if (!supervisorResult.ok) {
+          console.warn(`⚠️  Supervisor failed: ${supervisorResult.error}`);
+          appendSupervisorMemory(
+            {
+              iteration: state.iteration,
+              summary: "Supervisor run failed",
+              decision: supervisorResult.error ?? "unknown error",
+              timestamp: lastRunAt,
+            },
+            supervisorCfg.memoryLimit,
+          );
+        } else if (supervisorResult.noAction) {
+          console.log("✅ Supervisor: no action needed");
+          appendSupervisorMemory(
+            {
+              iteration: state.iteration,
+              summary: "No additional actions suggested",
+              decision: "no_action",
+              timestamp: lastRunAt,
+            },
+            supervisorCfg.memoryLimit,
+          );
+        } else if (supervisorResult.suggestion) {
+          const suggestion: SupervisorSuggestion = {
+            id: buildSupervisorSuggestionId(state.iteration),
+            iteration: state.iteration,
+            kind: supervisorResult.suggestion.kind,
+            title: supervisorResult.suggestion.title,
+            details: supervisorResult.suggestion.details,
+            proposedChanges: supervisorResult.suggestion.proposedChanges,
+            status: "pending",
+            createdAt: lastRunAt,
+          };
+          const suggestionStore = loadSupervisorSuggestions();
+          if (suggestionStore.parseError) {
+            console.warn(`⚠️  Could not save suggestion: ${suggestionStore.parseError}`);
+          } else {
+            suggestionStore.suggestions.push(suggestion);
+            saveSupervisorSuggestions(suggestionStore);
+            console.log(`📌 Supervisor suggestion created: ${suggestion.id}`);
+            console.log(`   Approve: ralph --approve-suggestion ${suggestion.id}`);
+            console.log(`   Reject:  ralph --reject-suggestion ${suggestion.id}`);
+            appendSupervisorMemory(
+              {
+                iteration: state.iteration,
+                summary: `${suggestion.kind}: ${suggestion.title}`,
+                decision: "pending_user_decision",
+                timestamp: lastRunAt,
+              },
+              supervisorCfg.memoryLimit,
+            );
+
+            if (completionDetected) {
+              state.supervisorState = {
+                ...(state.supervisorState ?? { enabled: true, pausedForDecision: false }),
+                enabled: true,
+                pausedForDecision: true,
+                pauseIteration: state.iteration,
+                pauseReason: "completion_detected_with_pending_supervisor_suggestion",
+                lastRunAt,
+                lastRunIteration: state.iteration,
+              };
+              saveState(state);
+              const decisionResult = await waitForSupervisorDecisionIfNeeded(state, state.iteration);
+              if (decisionResult.approvedAppliedCount > 0) {
+                shouldComplete = false;
+                console.log("🔄 Supervisor-approved changes detected. Continuing loop instead of exiting.");
+              } else {
+                console.log("✅ All supervisor suggestions resolved without approved changes.");
+              }
+            }
+          }
+        }
+      }
       }
 
       // Check for abort signal (early exit on precondition failure)
@@ -2066,7 +2482,7 @@ async function runRalphLoop(): Promise<void> {
       }
 
       // Check for full completion
-      if (completionDetected) {
+      if (shouldComplete) {
         if (state.iteration < minIterations) {
           // Completion detected but minimum iterations not reached
           console.log(`\n⏳ Completion promise detected, but minimum iterations (${minIterations}) not yet reached.`);
@@ -2106,9 +2522,6 @@ async function runRalphLoop(): Promise<void> {
       }
 
       // Update state for next iteration
-      if (state.rotation && state.rotation.length > 0) {
-        state.rotationIndex = ((state.rotationIndex ?? 0) + 1) % state.rotation.length;
-      }
       state.iteration++;
       saveState(state);
 
@@ -2116,15 +2529,6 @@ async function runRalphLoop(): Promise<void> {
       await new Promise(r => setTimeout(r, 1000));
 
     } catch (error) {
-      // Kill subprocess if still running to prevent orphaned processes
-      if (currentProc) {
-        try {
-          currentProc.kill();
-        } catch {
-          // Process may have already exited
-        }
-        currentProc = null;
-      }
       console.error(`\n❌ Error in iteration ${state.iteration}:`, error);
       console.log("Continuing to next iteration...");
 
@@ -2135,7 +2539,6 @@ async function runRalphLoop(): Promise<void> {
         startedAt: new Date(iterationStart).toISOString(),
         endedAt: new Date().toISOString(),
         durationMs: iterationDuration,
-        agent: currentAgent,
         model: currentModel,
         toolsUsed: {},
         filesModified: [],
@@ -2147,19 +2550,29 @@ async function runRalphLoop(): Promise<void> {
       history.totalDurationMs += iterationDuration;
       saveHistory(history);
 
-      if (state.rotation && state.rotation.length > 0) {
-        state.rotationIndex = ((state.rotationIndex ?? 0) + 1) % state.rotation.length;
-      }
       state.iteration++;
       saveState(state);
       await new Promise(r => setTimeout(r, 2000));
     }
   }
+
+  // Clean up SDK server on normal completion
+  if (sdkClient) {
+    try {
+      console.log("🧹 Closing SDK server...");
+      sdkClient.server.close();
+    } catch {
+      // Server may have already closed
+    }
+  }
 }
 
-// Run the loop
-runRalphLoop().catch(error => {
-  console.error("Fatal error:", error);
-  clearState();
-  process.exit(1);
-});
+if (import.meta.main) {
+  // Run the loop
+  runRalphLoop().catch(error => {
+    console.error("Fatal error:", error);
+    clearState();
+    process.exit(1);
+  });
+}
+}
