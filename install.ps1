@@ -10,10 +10,11 @@ if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-# Check for OpenCode CLI (required - SDK-only)
+# OpenCode CLI is NOT required - we use the SDK
+# But warn if OpenCode CLI is not installed (for reference)
 if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) {
-  Write-Error "OpenCode CLI is required but not installed. Install OpenCode: npm install -g opencode-ai"
-  exit 1
+  Write-Host "Note: OpenCode CLI not found. Not required - uses SDK."
+  Write-Host "      Install if you want CLI access: npm install -g opencode-ai"
 }
 
 # Get script directory
@@ -24,7 +25,7 @@ Write-Host "Installing dependencies..."
 Push-Location $scriptDir
 bun install
 
-# Link the package (makes 'ralph' command available)
+# Link package (makes 'ralph' command available)
 Write-Host "Linking ralph command..."
 bun link
 

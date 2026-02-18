@@ -144,12 +144,10 @@ fi
 `,
     );
 
-    const proc = Bun.spawn(["bun", "run", RALPH_PATH, "Implement feature", "--agent", "opencode", "--supervisor", "--supervisor-agent", "codex", "--max-iterations", "2", "--no-commit", "--no-stream"], {
+    const proc = Bun.spawn(["bun", "run", RALPH_PATH, "Implement feature", "--supervisor", "--max-iterations", "2", "--no-commit", "--no-stream"], {
       cwd,
       env: {
         ...process.env,
-        RALPH_OPENCODE_BINARY: agentPath,
-        RALPH_CODEX_BINARY: agentPath,
         SUP_MARKER: marker,
       },
       stdout: "pipe",
@@ -199,8 +197,7 @@ echo "<promise>COMPLETE</promise>"
 `,
     );
 
-    const res = runRalphSync(cwd, ["Simple task", "--agent", "opencode", "--max-iterations", "1", "--no-commit", "--no-stream"], {
-      RALPH_OPENCODE_BINARY: agentPath,
+    const res = runRalphSync(cwd, ["Simple task", "--max-iterations", "1", "--no-commit", "--no-stream"], {
     });
 
     expect(res.exitCode).toBe(0);

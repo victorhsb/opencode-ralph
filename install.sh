@@ -12,11 +12,11 @@ if ! command -v bun &> /dev/null; then
     exit 1
 fi
 
-# Check for OpenCode CLI (required - SDK-only)
+# OpenCode CLI is NOT required - we use the SDK
+# But warn if OpenCode CLI is not installed (for reference)
 if ! command -v opencode &> /dev/null; then
-    echo "Error: OpenCode CLI is required but not installed."
-    echo "Install OpenCode: npm install -g opencode-ai"
-    exit 1
+    echo "Note: OpenCode CLI not found. Not required - uses SDK."
+    echo "      Install if you want CLI access: npm install -g opencode-ai"
 fi
 
 # Get script directory
@@ -27,7 +27,7 @@ echo "Installing dependencies..."
 cd "$SCRIPT_DIR"
 bun install
 
-# Link the package (makes 'ralph' command available)
+# Link package (makes 'ralph' command available)
 echo "Linking ralph command..."
 bun link
 
