@@ -15,7 +15,11 @@ import { createSdkClient, type SdkClient } from "./src/sdk/client";
 import { executePrompt } from "./src/sdk/executor";
 import { formatEvent } from "./src/sdk/output";
 
-const VERSION = "1.2.1";
+// Get version from package.json
+const VERSION = process.env.npm_package_version ||
+  (existsSync(join(__dirname, "package.json"))
+    ? JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8")).version
+    : "2.0.0");
 
 // Context file path for mid-loop injection
 const stateDir = join(process.cwd(), ".ralph");
