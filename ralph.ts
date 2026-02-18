@@ -19,7 +19,7 @@ import { formatEvent } from "./src/sdk/output";
 const VERSION = process.env.npm_package_version ||
   (existsSync(join(__dirname, "package.json"))
     ? JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8")).version
-    : "2.0.0");
+    : "2.0.1");
 
 // Context file path for mid-loop injection
 const stateDir = join(process.cwd(), ".ralph");
@@ -2146,6 +2146,7 @@ async function runRalphLoop(): Promise<void> {
   console.log("");
   console.log("Starting loop... (Ctrl+C to stop)");
   console.log("═".repeat(68));
+  }
 
   // Initialize SDK client (default execution path)
   // SDK is initialized once at loop start and reused for all iterations
@@ -2578,5 +2579,4 @@ if (import.meta.main) {
     clearState();
     process.exit(1);
   });
-}
 }

@@ -1,14 +1,9 @@
 #!/usr/bin/env bun
 // @bun
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined")
-    return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
+var __require = import.meta.require;
 
 // ralph.ts
+var {$ } = globalThis.Bun;
 import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync, mkdirSync, statSync } from "fs";
 import { join as join2 } from "path";
 // node_modules/@opencode-ai/sdk/dist/gen/core/serverSentEvents.gen.js
@@ -209,7 +204,7 @@ var serializePrimitiveParam = ({ allowReserved, name, value }) => {
     return "";
   }
   if (typeof value === "object") {
-    throw new Error("Deeply-nested arrays/objects aren’t supported. Provide your own `querySerializer()` to handle these.");
+    throw new Error("Deeply-nested arrays/objects aren\u2019t supported. Provide your own `querySerializer()` to handle these.");
   }
   return `${name}=${allowReserved ? value : encodeURIComponent(value)}`;
 };
@@ -1133,334 +1128,412 @@ class OpencodeClient extends _HeyApiClient {
   auth = new Auth({ client: this._client });
   event = new Event({ client: this._client });
 }
-// node_modules/@opencode-ai/sdk/dist/server.js
-var {spawn} = (() => ({}));
-// src/sdk/client.ts
-var {existsSync, readFileSync} = (() => ({}));
 
-// node:path
-function assertPath(path) {
-  if (typeof path !== "string")
-    throw TypeError("Path must be a string. Received " + JSON.stringify(path));
+// node_modules/@opencode-ai/sdk/dist/client.js
+function createOpencodeClient(config) {
+  const client2 = createClient(config);
+  return new OpencodeClient({ client: client2 });
 }
-function normalizeStringPosix(path, allowAboveRoot) {
-  var res = "", lastSegmentLength = 0, lastSlash = -1, dots = 0, code;
-  for (var i = 0;i <= path.length; ++i) {
-    if (i < path.length)
-      code = path.charCodeAt(i);
-    else if (code === 47)
-      break;
-    else
-      code = 47;
-    if (code === 47) {
-      if (lastSlash === i - 1 || dots === 1)
-        ;
-      else if (lastSlash !== i - 1 && dots === 2) {
-        if (res.length < 2 || lastSegmentLength !== 2 || res.charCodeAt(res.length - 1) !== 46 || res.charCodeAt(res.length - 2) !== 46) {
-          if (res.length > 2) {
-            var lastSlashIndex = res.lastIndexOf("/");
-            if (lastSlashIndex !== res.length - 1) {
-              if (lastSlashIndex === -1)
-                res = "", lastSegmentLength = 0;
-              else
-                res = res.slice(0, lastSlashIndex), lastSegmentLength = res.length - 1 - res.lastIndexOf("/");
-              lastSlash = i, dots = 0;
-              continue;
-            }
-          } else if (res.length === 2 || res.length === 1) {
-            res = "", lastSegmentLength = 0, lastSlash = i, dots = 0;
-            continue;
+// node_modules/@opencode-ai/sdk/dist/server.js
+import { spawn } from "child_process";
+async function createOpencodeServer(options) {
+  options = Object.assign({
+    hostname: "127.0.0.1",
+    port: 4096,
+    timeout: 5000
+  }, options ?? {});
+  const proc = spawn(`opencode`, [`serve`, `--hostname=${options.hostname}`, `--port=${options.port}`], {
+    signal: options.signal,
+    env: {
+      ...process.env,
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(options.config ?? {})
+    }
+  });
+  const url = await new Promise((resolve, reject) => {
+    const id = setTimeout(() => {
+      reject(new Error(`Timeout waiting for server to start after ${options.timeout}ms`));
+    }, options.timeout);
+    let output = "";
+    proc.stdout?.on("data", (chunk) => {
+      output += chunk.toString();
+      const lines = output.split(`
+`);
+      for (const line of lines) {
+        if (line.startsWith("opencode server listening")) {
+          const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
+          if (!match) {
+            throw new Error(`Failed to parse server url from output: ${line}`);
+          }
+          clearTimeout(id);
+          resolve(match[1]);
+          return;
+        }
+      }
+    });
+    proc.stderr?.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+    proc.on("exit", (code) => {
+      clearTimeout(id);
+      let msg = `Server exited with code ${code}`;
+      if (output.trim()) {
+        msg += `
+Server output: ${output}`;
+      }
+      reject(new Error(msg));
+    });
+    proc.on("error", (error) => {
+      clearTimeout(id);
+      reject(error);
+    });
+    if (options.signal) {
+      options.signal.addEventListener("abort", () => {
+        clearTimeout(id);
+        reject(new Error("Aborted"));
+      });
+    }
+  });
+  return {
+    url,
+    close() {
+      proc.kill();
+    }
+  };
+}
+// node_modules/@opencode-ai/sdk/dist/index.js
+async function createOpencode(options) {
+  const server2 = await createOpencodeServer({
+    ...options
+  });
+  const client3 = createOpencodeClient({
+    baseUrl: server2.url
+  });
+  return {
+    client: client3,
+    server: server2
+  };
+}
+
+// src/sdk/client.ts
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+import { createServer } from "net";
+function loadPluginsFromConfig(configPath) {
+  if (!existsSync(configPath)) {
+    return [];
+  }
+  try {
+    const raw = readFileSync(configPath, "utf-8");
+    const withoutBlock = raw.replace(/\/\*[\s\S]*?\*\//g, "");
+    const withoutLine = withoutBlock.replace(/^\s*\/\/.*$/gm, "");
+    const parsed = JSON.parse(withoutLine);
+    const plugins = parsed?.plugin;
+    return Array.isArray(plugins) ? plugins.filter((p) => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function loadPluginsFromExistingConfigs() {
+  const userConfigPath = join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"), "opencode", "opencode.json");
+  const projectConfigPath = join(process.cwd(), ".ralph", "opencode.json");
+  const legacyProjectConfigPath = join(process.cwd(), ".opencode", "opencode.json");
+  const plugins = [
+    ...loadPluginsFromConfig(userConfigPath),
+    ...loadPluginsFromConfig(projectConfigPath),
+    ...loadPluginsFromConfig(legacyProjectConfigPath)
+  ];
+  return Array.from(new Set(plugins));
+}
+async function findAvailablePort(hostname, preferredPort) {
+  const listenOnce = (port) => {
+    return new Promise((resolve, reject) => {
+      const server2 = createServer();
+      server2.unref();
+      server2.once("error", reject);
+      server2.listen(port, hostname, () => {
+        const address = server2.address();
+        const resolvedPort = typeof address === "object" && address ? address.port : port;
+        server2.close((closeError) => {
+          if (closeError) {
+            reject(closeError);
+            return;
+          }
+          resolve(resolvedPort);
+        });
+      });
+    });
+  };
+  try {
+    return await listenOnce(preferredPort);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+    if (code && code !== "EADDRINUSE") {
+      throw error;
+    }
+    return await listenOnce(0);
+  }
+}
+async function createSdkClient(options) {
+  const hostname = options.hostname ?? "127.0.0.1";
+  const requestedPort = options.port ?? 4096;
+  const port = await findAvailablePort(hostname, requestedPort);
+  const config = {
+    model: options.model
+  };
+  if (options.allowAllPermissions) {
+    config.permission = {
+      read: "allow",
+      edit: "allow",
+      glob: "allow",
+      grep: "allow",
+      list: "allow",
+      bash: "allow",
+      task: "allow",
+      webfetch: "allow",
+      websearch: "allow",
+      codesearch: "allow",
+      todowrite: "allow",
+      todoread: "allow",
+      question: "allow",
+      lsp: "allow",
+      external_directory: "allow"
+    };
+  }
+  if (options.filterPlugins) {
+    const plugins = loadPluginsFromExistingConfigs();
+    config.plugin = plugins.filter((p) => /auth/i.test(p));
+  }
+  const opencode = await createOpencode({
+    hostname,
+    port,
+    timeout: 1e4,
+    config
+  });
+  return {
+    client: opencode.client,
+    server: opencode.server
+  };
+}
+
+// src/sdk/executor.ts
+async function executePrompt(options) {
+  const { client: client3, prompt, model, onEvent, signal } = options;
+  const toolCounts = new Map;
+  const errors = [];
+  let output = "";
+  try {
+    const session = await client3.session.create({
+      body: { title: `Ralph iteration ${Date.now()}` }
+    });
+    const eventSubscription = await client3.event.subscribe();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    let sessionComplete = false;
+    const eventPromise = (async () => {
+      try {
+        for await (const event of eventSubscription.stream) {
+          if (signal?.aborted)
+            break;
+          const eventType = event?.type;
+          if (eventType === "session.idle" || eventType === "session.error") {
+            sessionComplete = true;
+          }
+          const sdkEvent = parseSdkEvent(event);
+          if (sdkEvent.type === "tool_start" && sdkEvent.toolName) {
+            toolCounts.set(sdkEvent.toolName, (toolCounts.get(sdkEvent.toolName) ?? 0) + 1);
+          }
+          if (sdkEvent.type === "text" && sdkEvent.content) {
+            output += sdkEvent.content;
+          }
+          onEvent?.(sdkEvent);
+          if (sessionComplete) {
+            break;
           }
         }
-        if (allowAboveRoot) {
-          if (res.length > 0)
-            res += "/..";
-          else
-            res = "..";
-          lastSegmentLength = 2;
+      } catch (error) {
+        errors.push(`Event stream error: ${error}`);
+      }
+    })();
+    const modelConfig = model ? {
+      providerID: model.split("/")[0] || "openai",
+      modelID: model.split("/")[1] || model
+    } : undefined;
+    const result = await client3.session.prompt({
+      path: { id: session.id },
+      body: {
+        model: modelConfig,
+        parts: [{ type: "text", text: prompt }]
+      }
+    });
+    const timeoutPromise = new Promise((_, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error("Event stream timeout"));
+      }, 30000);
+      signal?.addEventListener("abort", () => {
+        clearTimeout(timeoutId);
+        reject(new Error("Aborted"));
+      });
+    });
+    try {
+      await Promise.race([eventPromise, timeoutPromise]);
+    } catch (error) {
+      if (String(error).includes("Aborted")) {
+        throw error;
+      }
+    }
+    const finalOutput = extractOutputFromMessage(result);
+    return {
+      output: finalOutput || output,
+      toolCounts,
+      errors,
+      success: true,
+      exitCode: 0
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(errorMessage);
+    return {
+      output,
+      toolCounts,
+      errors,
+      success: false,
+      exitCode: 1
+    };
+  }
+}
+function parseSdkEvent(event) {
+  const timestamp = Date.now();
+  if (!event || typeof event !== "object") {
+    return {
+      type: "text",
+      content: "",
+      timestamp
+    };
+  }
+  const eventObj = event;
+  const eventType = typeof eventObj.type === "string" ? eventObj.type : "";
+  const props = eventObj.properties || {};
+  if (eventType === "message.part.delta") {
+    const delta = typeof props.delta === "string" ? props.delta : "";
+    const field = typeof props.field === "string" ? props.field : "";
+    if (field === "text" && delta) {
+      return {
+        type: "text",
+        content: delta,
+        timestamp
+      };
+    }
+    return {
+      type: "text",
+      content: "",
+      timestamp
+    };
+  }
+  if (eventType === "message.part.updated") {
+    const part = props.part || {};
+    const partType = typeof part.type === "string" ? part.type : "";
+    if (partType === "tool_use") {
+      const toolName = typeof part.name === "string" ? part.name : "unknown";
+      return {
+        type: "tool_start",
+        toolName,
+        timestamp
+      };
+    }
+    if (partType === "tool_result") {
+      const toolName = typeof part.name === "string" ? part.name : "unknown";
+      return {
+        type: "tool_end",
+        toolName,
+        timestamp
+      };
+    }
+    if (partType === "text") {
+      const text = typeof part.text === "string" ? part.text : "";
+      const role = typeof part.role === "string" ? part.role : "";
+      if (text && role === "assistant") {
+        return {
+          type: "text",
+          content: text,
+          timestamp
+        };
+      }
+    }
+    if (partType === "reasoning" || partType === "thinking") {
+      const text = typeof part.text === "string" ? part.text : "";
+      if (text) {
+        return {
+          type: "thinking",
+          content: text,
+          timestamp
+        };
+      }
+    }
+  }
+  if (eventType === "session.error") {
+    const error = props.error || {};
+    const errorMessage = typeof error.data?.message === "string" ? error.data.message : typeof error.message === "string" ? error.message : "Unknown error";
+    return {
+      type: "error",
+      content: errorMessage,
+      timestamp
+    };
+  }
+  return {
+    type: "text",
+    content: "",
+    timestamp
+  };
+}
+function extractOutputFromMessage(message) {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+  const msg = message;
+  const output = [];
+  if (Array.isArray(msg.content)) {
+    for (const part of msg.content) {
+      if (typeof part === "object" && part !== null) {
+        const partObj = part;
+        if (partObj.type === "text" && typeof partObj.text === "string") {
+          output.push(partObj.text);
         }
-      } else {
-        if (res.length > 0)
-          res += "/" + path.slice(lastSlash + 1, i);
-        else
-          res = path.slice(lastSlash + 1, i);
-        lastSegmentLength = i - lastSlash - 1;
+        if (partObj.type === "thinking" && typeof partObj.thinking === "string") {
+          output.push(`[Thinking: ${partObj.thinking}]`);
+        }
+        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
+          output.push(`[Tool ${partObj.name} executed]`);
+        }
       }
-      lastSlash = i, dots = 0;
-    } else if (code === 46 && dots !== -1)
-      ++dots;
-    else
-      dots = -1;
-  }
-  return res;
-}
-function _format(sep, pathObject) {
-  var dir = pathObject.dir || pathObject.root, base = pathObject.base || (pathObject.name || "") + (pathObject.ext || "");
-  if (!dir)
-    return base;
-  if (dir === pathObject.root)
-    return dir + base;
-  return dir + sep + base;
-}
-function resolve() {
-  var resolvedPath = "", resolvedAbsolute = false, cwd;
-  for (var i = arguments.length - 1;i >= -1 && !resolvedAbsolute; i--) {
-    var path;
-    if (i >= 0)
-      path = arguments[i];
-    else {
-      if (cwd === undefined)
-        cwd = process.cwd();
-      path = cwd;
     }
-    if (assertPath(path), path.length === 0)
-      continue;
-    resolvedPath = path + "/" + resolvedPath, resolvedAbsolute = path.charCodeAt(0) === 47;
   }
-  if (resolvedPath = normalizeStringPosix(resolvedPath, !resolvedAbsolute), resolvedAbsolute)
-    if (resolvedPath.length > 0)
-      return "/" + resolvedPath;
-    else
-      return "/";
-  else if (resolvedPath.length > 0)
-    return resolvedPath;
-  else
-    return ".";
-}
-function normalize(path) {
-  if (assertPath(path), path.length === 0)
-    return ".";
-  var isAbsolute = path.charCodeAt(0) === 47, trailingSeparator = path.charCodeAt(path.length - 1) === 47;
-  if (path = normalizeStringPosix(path, !isAbsolute), path.length === 0 && !isAbsolute)
-    path = ".";
-  if (path.length > 0 && trailingSeparator)
-    path += "/";
-  if (isAbsolute)
-    return "/" + path;
-  return path;
-}
-function isAbsolute(path) {
-  return assertPath(path), path.length > 0 && path.charCodeAt(0) === 47;
-}
-function join() {
-  if (arguments.length === 0)
-    return ".";
-  var joined;
-  for (var i = 0;i < arguments.length; ++i) {
-    var arg = arguments[i];
-    if (assertPath(arg), arg.length > 0)
-      if (joined === undefined)
-        joined = arg;
-      else
-        joined += "/" + arg;
+  if (output.length === 0 && typeof msg.text === "string") {
+    output.push(msg.text);
   }
-  if (joined === undefined)
-    return ".";
-  return normalize(joined);
+  return output.join(`
+`);
 }
-function relative(from, to) {
-  if (assertPath(from), assertPath(to), from === to)
-    return "";
-  if (from = resolve(from), to = resolve(to), from === to)
-    return "";
-  var fromStart = 1;
-  for (;fromStart < from.length; ++fromStart)
-    if (from.charCodeAt(fromStart) !== 47)
-      break;
-  var fromEnd = from.length, fromLen = fromEnd - fromStart, toStart = 1;
-  for (;toStart < to.length; ++toStart)
-    if (to.charCodeAt(toStart) !== 47)
-      break;
-  var toEnd = to.length, toLen = toEnd - toStart, length = fromLen < toLen ? fromLen : toLen, lastCommonSep = -1, i = 0;
-  for (;i <= length; ++i) {
-    if (i === length) {
-      if (toLen > length) {
-        if (to.charCodeAt(toStart + i) === 47)
-          return to.slice(toStart + i + 1);
-        else if (i === 0)
-          return to.slice(toStart + i);
-      } else if (fromLen > length) {
-        if (from.charCodeAt(fromStart + i) === 47)
-          lastCommonSep = i;
-        else if (i === 0)
-          lastCommonSep = 0;
-      }
-      break;
-    }
-    var fromCode = from.charCodeAt(fromStart + i), toCode = to.charCodeAt(toStart + i);
-    if (fromCode !== toCode)
-      break;
-    else if (fromCode === 47)
-      lastCommonSep = i;
-  }
-  var out = "";
-  for (i = fromStart + lastCommonSep + 1;i <= fromEnd; ++i)
-    if (i === fromEnd || from.charCodeAt(i) === 47)
-      if (out.length === 0)
-        out += "..";
-      else
-        out += "/..";
-  if (out.length > 0)
-    return out + to.slice(toStart + lastCommonSep);
-  else {
-    if (toStart += lastCommonSep, to.charCodeAt(toStart) === 47)
-      ++toStart;
-    return to.slice(toStart);
-  }
-}
-function _makeLong(path) {
-  return path;
-}
-function dirname(path) {
-  if (assertPath(path), path.length === 0)
-    return ".";
-  var code = path.charCodeAt(0), hasRoot = code === 47, end = -1, matchedSlash = true;
-  for (var i = path.length - 1;i >= 1; --i)
-    if (code = path.charCodeAt(i), code === 47) {
-      if (!matchedSlash) {
-        end = i;
-        break;
-      }
-    } else
-      matchedSlash = false;
-  if (end === -1)
-    return hasRoot ? "/" : ".";
-  if (hasRoot && end === 1)
-    return "//";
-  return path.slice(0, end);
-}
-function basename(path, ext) {
-  if (ext !== undefined && typeof ext !== "string")
-    throw TypeError('"ext" argument must be a string');
-  assertPath(path);
-  var start = 0, end = -1, matchedSlash = true, i;
-  if (ext !== undefined && ext.length > 0 && ext.length <= path.length) {
-    if (ext.length === path.length && ext === path)
+
+// src/sdk/output.ts
+function formatEvent(event) {
+  switch (event.type) {
+    case "text":
+      return event.content || "";
+    case "thinking":
+      return event.content ? `\uD83D\uDCAD ${event.content}` : "";
+    case "tool_start":
+      return event.toolName ? `\uD83D\uDD27 ${event.toolName}...` : "\uD83D\uDD27 Using tool...";
+    case "tool_end":
+      return event.toolName ? `\u2713 ${event.toolName}` : "\u2713 Tool complete";
+    case "error":
+      return event.content ? `\u274C ${event.content}` : "\u274C Error occurred";
+    default:
       return "";
-    var extIdx = ext.length - 1, firstNonSlashEnd = -1;
-    for (i = path.length - 1;i >= 0; --i) {
-      var code = path.charCodeAt(i);
-      if (code === 47) {
-        if (!matchedSlash) {
-          start = i + 1;
-          break;
-        }
-      } else {
-        if (firstNonSlashEnd === -1)
-          matchedSlash = false, firstNonSlashEnd = i + 1;
-        if (extIdx >= 0)
-          if (code === ext.charCodeAt(extIdx)) {
-            if (--extIdx === -1)
-              end = i;
-          } else
-            extIdx = -1, end = firstNonSlashEnd;
-      }
-    }
-    if (start === end)
-      end = firstNonSlashEnd;
-    else if (end === -1)
-      end = path.length;
-    return path.slice(start, end);
-  } else {
-    for (i = path.length - 1;i >= 0; --i)
-      if (path.charCodeAt(i) === 47) {
-        if (!matchedSlash) {
-          start = i + 1;
-          break;
-        }
-      } else if (end === -1)
-        matchedSlash = false, end = i + 1;
-    if (end === -1)
-      return "";
-    return path.slice(start, end);
   }
 }
-function extname(path) {
-  assertPath(path);
-  var startDot = -1, startPart = 0, end = -1, matchedSlash = true, preDotState = 0;
-  for (var i = path.length - 1;i >= 0; --i) {
-    var code = path.charCodeAt(i);
-    if (code === 47) {
-      if (!matchedSlash) {
-        startPart = i + 1;
-        break;
-      }
-      continue;
-    }
-    if (end === -1)
-      matchedSlash = false, end = i + 1;
-    if (code === 46) {
-      if (startDot === -1)
-        startDot = i;
-      else if (preDotState !== 1)
-        preDotState = 1;
-    } else if (startDot !== -1)
-      preDotState = -1;
-  }
-  if (startDot === -1 || end === -1 || preDotState === 0 || preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)
-    return "";
-  return path.slice(startDot, end);
-}
-function format(pathObject) {
-  if (pathObject === null || typeof pathObject !== "object")
-    throw TypeError('The "pathObject" argument must be of type Object. Received type ' + typeof pathObject);
-  return _format("/", pathObject);
-}
-function parse(path) {
-  assertPath(path);
-  var ret = { root: "", dir: "", base: "", ext: "", name: "" };
-  if (path.length === 0)
-    return ret;
-  var code = path.charCodeAt(0), isAbsolute2 = code === 47, start;
-  if (isAbsolute2)
-    ret.root = "/", start = 1;
-  else
-    start = 0;
-  var startDot = -1, startPart = 0, end = -1, matchedSlash = true, i = path.length - 1, preDotState = 0;
-  for (;i >= start; --i) {
-    if (code = path.charCodeAt(i), code === 47) {
-      if (!matchedSlash) {
-        startPart = i + 1;
-        break;
-      }
-      continue;
-    }
-    if (end === -1)
-      matchedSlash = false, end = i + 1;
-    if (code === 46) {
-      if (startDot === -1)
-        startDot = i;
-      else if (preDotState !== 1)
-        preDotState = 1;
-    } else if (startDot !== -1)
-      preDotState = -1;
-  }
-  if (startDot === -1 || end === -1 || preDotState === 0 || preDotState === 1 && startDot === end - 1 && startDot === startPart + 1) {
-    if (end !== -1)
-      if (startPart === 0 && isAbsolute2)
-        ret.base = ret.name = path.slice(1, end);
-      else
-        ret.base = ret.name = path.slice(startPart, end);
-  } else {
-    if (startPart === 0 && isAbsolute2)
-      ret.name = path.slice(1, startDot), ret.base = path.slice(1, end);
-    else
-      ret.name = path.slice(startPart, startDot), ret.base = path.slice(startPart, end);
-    ret.ext = path.slice(startDot, end);
-  }
-  if (startPart > 0)
-    ret.dir = path.slice(0, startPart - 1);
-  else if (isAbsolute2)
-    ret.dir = "/";
-  return ret;
-}
-var sep = "/";
-var delimiter = ":";
-var posix = ((p) => (p.posix = p, p))({ resolve, normalize, isAbsolute, join, relative, _makeLong, dirname, basename, extname, format, parse, sep, delimiter, win32: null, posix: null });
 
 // ralph.ts
 var __dirname = "/Users/torugo/go/src/github.com/victorhsb/opencode-ralph";
-var VERSION = process.env.npm_package_version || (existsSync2(join2(__dirname, "package.json")) ? JSON.parse(readFileSync2(join2(__dirname, "package.json"), "utf-8")).version : "2.0.0");
+var VERSION = process.env.npm_package_version || (existsSync2(join2(__dirname, "package.json")) ? JSON.parse(readFileSync2(join2(__dirname, "package.json"), "utf-8")).version : "2.0.1");
 var stateDir = join2(process.cwd(), ".ralph");
 var statePath = join2(stateDir, "ralph-loop.state.json");
 var contextPath = join2(stateDir, "ralph-context.md");
@@ -1561,6 +1634,19 @@ function loadHistory() {
     };
   }
 }
+function saveHistory(history) {
+  if (!existsSync2(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  writeFileSync(historyPath, JSON.stringify(history, null, 2));
+}
+function clearHistory() {
+  if (existsSync2(historyPath)) {
+    try {
+      __require("fs").unlinkSync(historyPath);
+    } catch {}
+  }
+}
 function ensureStateDir() {
   if (!existsSync2(stateDir)) {
     mkdirSync(stateDir, { recursive: true });
@@ -1584,6 +1670,70 @@ function loadSupervisorSuggestions(path = supervisorSuggestionsPath) {
 function saveSupervisorSuggestions(store, path = supervisorSuggestionsPath) {
   ensureStateDir();
   writeFileSync(path, JSON.stringify(store, null, 2));
+}
+function parseSupervisorMemory(path = supervisorMemoryPath) {
+  if (!existsSync2(path))
+    return [];
+  const content = readFileSync2(path, "utf-8").trim();
+  if (!content)
+    return [];
+  const sections = content.split(/\n(?=## )/g);
+  const entries = [];
+  for (const section of sections) {
+    const lines = section.split(`
+`);
+    if (!lines[0]?.startsWith("## "))
+      continue;
+    const header = lines[0].replace(/^##\s+/, "").trim();
+    const headerMatch = header.match(/^(.+?)\s+\|\s+Iteration\s+(\d+)$/i);
+    if (!headerMatch)
+      continue;
+    const timestamp = headerMatch[1].trim();
+    const iteration = parseInt(headerMatch[2], 10);
+    const summaryLine = lines.find((line) => line.startsWith("- Summary: "));
+    const decisionLine = lines.find((line) => line.startsWith("- Decision: "));
+    if (!summaryLine || !decisionLine || Number.isNaN(iteration))
+      continue;
+    entries.push({
+      iteration,
+      summary: summaryLine.replace("- Summary: ", "").trim(),
+      decision: decisionLine.replace("- Decision: ", "").trim(),
+      timestamp
+    });
+  }
+  return entries;
+}
+function saveSupervisorMemory(entries, path = supervisorMemoryPath) {
+  ensureStateDir();
+  const content = [
+    "# Supervisor Memory",
+    "",
+    ...entries.flatMap((entry) => [
+      `## ${entry.timestamp} | Iteration ${entry.iteration}`,
+      `- Summary: ${entry.summary}`,
+      `- Decision: ${entry.decision}`,
+      ""
+    ])
+  ].join(`
+`).trimEnd() + `
+`;
+  writeFileSync(path, content);
+}
+function appendSupervisorMemory(entry, memoryLimit, path = supervisorMemoryPath) {
+  const existing = parseSupervisorMemory(path);
+  const boundedLimit = Number.isFinite(memoryLimit) && memoryLimit > 0 ? Math.floor(memoryLimit) : 20;
+  const next = [...existing, entry].slice(-boundedLimit);
+  saveSupervisorMemory(next, path);
+}
+function buildSupervisorSuggestionId(iteration) {
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `sup-${iteration}-${Date.now()}-${rand}`;
+}
+function truncateForPrompt(text, maxChars) {
+  if (text.length <= maxChars)
+    return text;
+  return `${text.slice(0, Math.max(0, maxChars - 20))}
+...[truncated]`;
 }
 function appendContextEntry(contextText) {
   ensureStateDir();
@@ -2019,6 +2169,25 @@ function displayTasksWithIndices(tasks) {
     }
   }
 }
+function findCurrentTask(tasks) {
+  for (const task of tasks) {
+    if (task.status === "in-progress") {
+      return task;
+    }
+  }
+  return null;
+}
+function findNextTask(tasks) {
+  for (const task of tasks) {
+    if (task.status === "todo") {
+      return task;
+    }
+  }
+  return null;
+}
+function allTasksComplete(tasks) {
+  return tasks.length > 0 && tasks.every((t) => t.status === "complete");
+}
 var prompt = "";
 var minIterations = 1;
 var maxIterations = 0;
@@ -2232,6 +2401,12 @@ if (maxIterations > 0 && minIterations > maxIterations) {
   console.error(`Error: --min-iterations (${minIterations}) cannot be greater than --max-iterations (${maxIterations})`);
   process.exit(1);
 }
+function saveState(state) {
+  if (!existsSync2(stateDir)) {
+    mkdirSync(stateDir, { recursive: true });
+  }
+  writeFileSync(statePath, JSON.stringify(state, null, 2));
+}
 function loadState() {
   if (!existsSync2(statePath)) {
     return null;
@@ -2241,4 +2416,1075 @@ function loadState() {
   } catch {
     return null;
   }
+}
+function clearState() {
+  if (existsSync2(statePath)) {
+    try {
+      __require("fs").unlinkSync(statePath);
+    } catch {}
+  }
+}
+function loadContext() {
+  if (!existsSync2(contextPath)) {
+    return null;
+  }
+  try {
+    const content = readFileSync2(contextPath, "utf-8").trim();
+    return content || null;
+  } catch {
+    return null;
+  }
+}
+function clearContext() {
+  if (existsSync2(contextPath)) {
+    try {
+      __require("fs").unlinkSync(contextPath);
+    } catch {}
+  }
+}
+function loadCustomPromptTemplate(templatePath, state) {
+  if (!existsSync2(templatePath)) {
+    console.error(`Error: Prompt template not found: ${templatePath}`);
+    process.exit(1);
+  }
+  try {
+    let template = readFileSync2(templatePath, "utf-8");
+    const context = loadContext() || "";
+    let tasksContent = "";
+    if (state.tasksMode && existsSync2(tasksPath)) {
+      tasksContent = readFileSync2(tasksPath, "utf-8");
+    }
+    template = template.replace(/\{\{iteration\}\}/g, String(state.iteration)).replace(/\{\{max_iterations\}\}/g, state.maxIterations > 0 ? String(state.maxIterations) : "unlimited").replace(/\{\{min_iterations\}\}/g, String(state.minIterations)).replace(/\{\{prompt\}\}/g, state.prompt).replace(/\{\{completion_promise\}\}/g, state.completionPromise).replace(/\{\{abort_promise\}\}/g, state.abortPromise || "").replace(/\{\{task_promise\}\}/g, state.taskPromise).replace(/\{\{context\}\}/g, context).replace(/\{\{tasks\}\}/g, tasksContent);
+    return template;
+  } catch (err) {
+    console.error(`Error reading prompt template: ${err}`);
+    process.exit(1);
+  }
+}
+function buildPrompt(state) {
+  if (promptTemplatePath) {
+    const customPrompt = loadCustomPromptTemplate(promptTemplatePath, state);
+    if (customPrompt)
+      return customPrompt;
+  }
+  const context = loadContext();
+  const contextSection = context ? `
+## Additional Context (added by user mid-loop)
+
+${context}
+
+---
+` : "";
+  if (state.tasksMode) {
+    const tasksSection = getTasksModeSection(state);
+    return `
+# Ralph Wiggum Loop - Iteration ${state.iteration}
+
+You are in an iterative development loop working through a task list.
+${contextSection}${tasksSection}
+## Your Main Goal
+
+${state.prompt}
+
+## Critical Rules
+
+- Work on ONE task at a time from .ralph/ralph-tasks.md
+- ONLY output <promise>${state.taskPromise}</promise> when the current task is complete and marked in ralph-tasks.md
+- ONLY output <promise>${state.completionPromise}</promise> when ALL tasks are truly done
+- Output promise tags DIRECTLY - do not quote them, explain them, or say you "will" output them
+- Do NOT lie or output false promises to exit the loop
+- If stuck, try a different approach
+- Check your work before claiming completion
+
+## Current Iteration: ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"} (min: ${state.minIterations ?? 1})
+
+Tasks Mode: ENABLED - Work on one task at a time from ralph-tasks.md
+
+Now, work on the current task. Good luck!
+`.trim();
+  }
+  return `
+# Ralph Wiggum Loop - Iteration ${state.iteration}
+
+You are in an iterative development loop. Work on the task below until you can genuinely complete it.
+${contextSection}
+## Your Task
+
+${state.prompt}
+
+## Instructions
+
+1. Read the current state of files to understand what's been done
+2. Track your progress and plan remaining work
+3. Make progress on the task
+4. Run tests/verification if applicable
+5. When the task is GENUINELY COMPLETE, output:
+   <promise>${state.completionPromise}</promise>
+
+## Critical Rules
+
+- ONLY output <promise>${state.completionPromise}</promise> when the task is truly done
+- Output the promise tag DIRECTLY - do not quote it, explain it, or say you "will" output it
+- Do NOT lie or output false promises to exit the loop
+- If stuck, try a different approach
+- Check your work before claiming completion
+- The loop will continue until you succeed
+
+## Current Iteration: ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"} (min: ${state.minIterations ?? 1})
+
+Now, work on the task. Good luck!
+`.trim();
+}
+function loadCustomSupervisorPromptTemplate(templatePath, state, coderOutput, history) {
+  if (!existsSync2(templatePath)) {
+    console.error(`Error: Supervisor prompt template not found: ${templatePath}`);
+    process.exit(1);
+  }
+  const context = loadContext() || "";
+  const tasksContent = existsSync2(tasksPath) ? readFileSync2(tasksPath, "utf-8") : "";
+  const memoryEntries = parseSupervisorMemory().slice(-10);
+  const memoryText = memoryEntries.map((m) => `${m.timestamp} [iter ${m.iteration}] ${m.summary} (${m.decision})`).join(`
+`);
+  let template = readFileSync2(templatePath, "utf-8");
+  template = template.replace(/\{\{iteration\}\}/g, String(state.iteration)).replace(/\{\{prompt\}\}/g, state.prompt).replace(/\{\{coder_output\}\}/g, coderOutput).replace(/\{\{context\}\}/g, context).replace(/\{\{tasks\}\}/g, tasksContent).replace(/\{\{supervisor_memory\}\}/g, memoryText).replace(/\{\{no_progress_iterations\}\}/g, String(history.struggleIndicators.noProgressIterations)).replace(/\{\{short_iterations\}\}/g, String(history.struggleIndicators.shortIterations));
+  return template;
+}
+function buildSupervisorPrompt(state, supervisorConfig, coderOutput, history) {
+  if (supervisorConfig.promptTemplate) {
+    const template = loadCustomSupervisorPromptTemplate(supervisorConfig.promptTemplate, state, coderOutput, history);
+    if (template)
+      return template;
+  }
+  const context = loadContext() || "(none)";
+  const tasksContent = existsSync2(tasksPath) ? readFileSync2(tasksPath, "utf-8") : "(no tasks file)";
+  const memoryEntries = parseSupervisorMemory().slice(-10);
+  const memoryText = memoryEntries.length > 0 ? memoryEntries.map((m) => `- ${m.timestamp} (iteration ${m.iteration}): ${m.summary} | ${m.decision}`).join(`
+`) : "- no prior supervisor memory";
+  const truncatedOutput = truncateForPrompt(coderOutput, 6000);
+  return `
+# Ralph Supervisor - Iteration ${state.iteration}
+
+You are supervising a coding agent loop. Review the latest coder execution and suggest improvements if needed.
+You must not modify files or take actions. You can only communicate recommendations to the user.
+
+## Supervisor Protocol (strict)
+
+If no action is needed, output exactly:
+<promise>${supervisorConfig.noActionPromise}</promise>
+
+If action is needed, output:
+<promise>${supervisorConfig.suggestionPromise}</promise>
+<supervisor_suggestion>{"kind":"add_task"|"add_context","title":"...","details":"...","proposedChanges":{"task":"..."} or {"context":"..."}}</supervisor_suggestion>
+
+Only allowed kinds: add_task, add_context.
+Return exactly one suggestion block when suggesting action.
+
+## User Prompt
+${state.prompt}
+
+## Current Context
+${context}
+
+## Current Tasks
+\`\`\`markdown
+${tasksContent}
+\`\`\`
+
+## Recent Supervisor Memory
+${memoryText}
+
+## Latest Coder Output
+\`\`\`
+${truncatedOutput}
+\`\`\`
+
+## Struggle Signals
+- no progress iterations: ${history.struggleIndicators.noProgressIterations}
+- short iterations: ${history.struggleIndicators.shortIterations}
+`.trim();
+}
+function parseSupervisorOutput(output, noActionPromise, suggestionPromise, iteration) {
+  const noActionDetected = checkCompletion(output, noActionPromise);
+  const suggestionDetected = checkCompletion(output, suggestionPromise);
+  if (noActionDetected && !suggestionDetected) {
+    return { ok: true, noAction: true, rawOutput: output };
+  }
+  if (!suggestionDetected) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: output,
+      error: "supervisor output missing required promise tag"
+    };
+  }
+  const match = output.match(/<supervisor_suggestion>\s*([\s\S]*?)\s*<\/supervisor_suggestion>/i);
+  if (!match) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: output,
+      error: "suggestion promise found, but missing <supervisor_suggestion> JSON block"
+    };
+  }
+  try {
+    const parsed = JSON.parse(match[1]);
+    const kind = parsed?.kind;
+    const title = typeof parsed?.title === "string" ? parsed.title.trim() : "";
+    const details = typeof parsed?.details === "string" ? parsed.details.trim() : "";
+    const proposedChanges = parsed?.proposedChanges && typeof parsed.proposedChanges === "object" ? parsed.proposedChanges : {};
+    if (kind !== "add_task" && kind !== "add_context") {
+      return { ok: false, noAction: false, rawOutput: output, error: `invalid suggestion kind: ${String(kind)}` };
+    }
+    if (!title) {
+      return { ok: false, noAction: false, rawOutput: output, error: "suggestion title is required" };
+    }
+    if (kind === "add_task" && !proposedChanges.task?.trim()) {
+      return { ok: false, noAction: false, rawOutput: output, error: "add_task suggestion requires proposedChanges.task" };
+    }
+    if (kind === "add_context" && !proposedChanges.context?.trim()) {
+      return { ok: false, noAction: false, rawOutput: output, error: "add_context suggestion requires proposedChanges.context" };
+    }
+    return {
+      ok: true,
+      noAction: false,
+      rawOutput: output,
+      suggestion: {
+        iteration,
+        kind,
+        title,
+        details,
+        proposedChanges
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: output,
+      error: `invalid supervisor suggestion JSON: ${String(error)}`
+    };
+  }
+}
+async function runSupervisorOnce(state, supervisorConfig, history, coderOutput, sdkClient) {
+  try {
+    const supervisorPrompt = buildSupervisorPrompt(state, supervisorConfig, coderOutput, history);
+    const result = await executePrompt({
+      client: sdkClient.client,
+      prompt: supervisorPrompt,
+      model: supervisorConfig.model,
+      onEvent: (event) => {
+        if (verboseTools) {
+          const formatted = formatEvent(event);
+          if (formatted)
+            console.log(`| [Supervisor] ${formatted}`);
+        }
+      }
+    });
+    if (!result.success) {
+      return {
+        ok: false,
+        noAction: false,
+        rawOutput: result.output,
+        error: result.errors.join("; ") || "SDK execution failed"
+      };
+    }
+    return parseSupervisorOutput(result.output, supervisorConfig.noActionPromise, supervisorConfig.suggestionPromise, state.iteration);
+  } catch (error) {
+    return {
+      ok: false,
+      noAction: false,
+      rawOutput: "",
+      error: String(error)
+    };
+  }
+}
+async function waitForSupervisorDecisionIfNeeded(state, iteration) {
+  let printedHint = false;
+  while (true) {
+    const store = loadSupervisorSuggestions();
+    if (store.parseError) {
+      if (!printedHint) {
+        console.warn(`\u26A0\uFE0F  ${store.parseError}`);
+        console.warn("   Fix the file or reject pending suggestions once readable.");
+        printedHint = true;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+      continue;
+    }
+    const pending = store.suggestions.filter((s) => s.iteration === iteration && s.status === "pending");
+    if (pending.length === 0) {
+      const approvedApplied = store.suggestions.filter((s) => s.iteration === iteration && (s.status === "approved" || s.status === "applied")).length;
+      state.supervisorState = {
+        ...state.supervisorState ?? { enabled: true, pausedForDecision: false },
+        pausedForDecision: false,
+        pauseIteration: undefined,
+        pauseReason: undefined
+      };
+      saveState(state);
+      return { approvedAppliedCount: approvedApplied };
+    }
+    if (!printedHint) {
+      console.log("\u23F8\uFE0F  Waiting for supervisor decision...");
+      for (const item of pending) {
+        console.log(`   - Approve: ralph --approve-suggestion ${item.id}`);
+        console.log(`   - Reject:  ralph --reject-suggestion ${item.id}`);
+      }
+      printedHint = true;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+function getTasksModeSection(state) {
+  if (!existsSync2(tasksPath)) {
+    return `
+## TASKS MODE: Enabled (no tasks file found)
+
+Create .ralph/ralph-tasks.md with your task list, or use \`ralph --add-task "description"\` to add tasks.
+`;
+  }
+  try {
+    const tasksContent = readFileSync2(tasksPath, "utf-8");
+    const tasks = parseTasks(tasksContent);
+    const currentTask = findCurrentTask(tasks);
+    const nextTask = findNextTask(tasks);
+    let taskInstructions = "";
+    if (currentTask) {
+      taskInstructions = `
+\uD83D\uDD04 CURRENT TASK: "${currentTask.text}"
+   Focus on completing this specific task.
+   When done: Mark as [x] in .ralph/ralph-tasks.md and output <promise>${state.taskPromise}</promise>`;
+    } else if (nextTask) {
+      taskInstructions = `
+\uD83D\uDCCD NEXT TASK: "${nextTask.text}"
+   Mark as [/] in .ralph/ralph-tasks.md before starting.
+   When done: Mark as [x] and output <promise>${state.taskPromise}</promise>`;
+    } else if (allTasksComplete(tasks)) {
+      taskInstructions = `
+\u2705 ALL TASKS COMPLETE!
+   Output <promise>${state.completionPromise}</promise> to finish.`;
+    } else {
+      taskInstructions = `
+\uD83D\uDCCB No tasks found. Add tasks to .ralph/ralph-tasks.md or use \`ralph --add-task\``;
+    }
+    return `
+## TASKS MODE: Working through task list
+
+Current tasks from .ralph/ralph-tasks.md:
+\`\`\`markdown
+${tasksContent.trim()}
+\`\`\`
+${taskInstructions}
+
+### Task Workflow
+1. Find any task marked [/] (in progress). If none, pick the first [ ] task.
+2. Mark the task as [/] in ralph-tasks.md before starting.
+3. Complete the task.
+4. Mark as [x] when verified complete.
+5. Output <promise>${state.taskPromise}</promise> to move to the next task.
+6. Only output <promise>${state.completionPromise}</promise> when ALL tasks are [x].
+
+---
+`;
+  } catch {
+    return `
+## TASKS MODE: Error reading tasks file
+
+Unable to read .ralph/ralph-tasks.md
+`;
+  }
+}
+function checkCompletion(output, promise) {
+  const escapedPromise = escapeRegex(promise);
+  const promisePattern = new RegExp(`<promise>\\s*${escapedPromise}\\s*</promise>`, "gi");
+  const matches = output.match(promisePattern);
+  if (!matches)
+    return false;
+  for (const match of matches) {
+    const matchIndex = output.indexOf(match);
+    const contextBefore = output.substring(Math.max(0, matchIndex - 100), matchIndex).toLowerCase();
+    const negationPatterns = [
+      /\bnot\s+(yet\s+)?(say|output|write|respond|print)/,
+      /\bdon'?t\s+(say|output|write|respond|print)/,
+      /\bwon'?t\s+(say|output|write|respond|print)/,
+      /\bwill\s+not\s+(say|output|write|respond|print)/,
+      /\bshould\s+not\s+(say|output|write|respond|print)/,
+      /\bwouldn'?t\s+(say|output|write|respond|print)/,
+      /\bavoid\s+(saying|outputting|writing)/,
+      /\bwithout\s+(saying|outputting|writing)/,
+      /\bbefore\s+(saying|outputting|I\s+say)/,
+      /\buntil\s+(I\s+)?(say|output|can\s+say)/
+    ];
+    const hasNegation = negationPatterns.some((pattern) => pattern.test(contextBefore));
+    if (hasNegation)
+      continue;
+    const quotesBefore = (contextBefore.match(/["'`]/g) || []).length;
+    if (quotesBefore % 2 === 1)
+      continue;
+    return true;
+  }
+  return false;
+}
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function detectPlaceholderPluginError(output) {
+  return output.includes("ralph-wiggum is not yet ready for use. This is a placeholder package.");
+}
+function detectSdkModelNotFoundError(output) {
+  const lowerOutput = output.toLowerCase();
+  return lowerOutput.includes("providermodelfound") || lowerOutput.includes("model not found") || lowerOutput.includes("provider returned error") || lowerOutput.includes("no model configured");
+}
+function detectSdkPlaceholderPluginError(output) {
+  return output.includes("ralph-wiggum is not yet ready for use");
+}
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds % 3600 / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+function formatToolSummary(toolCounts, maxItems = 6) {
+  if (!toolCounts.size)
+    return "";
+  const entries = Array.from(toolCounts.entries()).sort((a, b) => b[1] - a[1]);
+  const shown = entries.slice(0, maxItems);
+  const remaining = entries.length - shown.length;
+  const parts = shown.map(([name, count]) => `${name} ${count}`);
+  if (remaining > 0) {
+    parts.push(`+${remaining} more`);
+  }
+  return parts.join(" \u2022 ");
+}
+function printIterationSummary(params) {
+  const toolSummary = formatToolSummary(params.toolCounts);
+  const duration = formatDuration(params.elapsedMs);
+  console.log(`Iteration ${params.iteration} completed in ${duration} (${params.model})`);
+  console.log(`
+Iteration Summary`);
+  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  console.log(`Iteration: ${params.iteration}`);
+  console.log(`Elapsed:   ${duration} (${params.model})`);
+  if (toolSummary) {
+    console.log(`Tools:     ${toolSummary}`);
+  } else {
+    console.log("Tools:     none");
+  }
+  console.log(`Exit code: ${params.exitCode}`);
+  console.log(`Completion promise: ${params.completionDetected ? "detected" : "not detected"}`);
+}
+async function captureFileSnapshot() {
+  const files = new Map;
+  try {
+    const status = await $`git status --porcelain`.text();
+    const trackedFiles = await $`git ls-files`.text();
+    const allFiles = new Set;
+    for (const line of status.split(`
+`)) {
+      if (line.trim()) {
+        allFiles.add(line.substring(3).trim());
+      }
+    }
+    for (const file of trackedFiles.split(`
+`)) {
+      if (file.trim()) {
+        allFiles.add(file.trim());
+      }
+    }
+    for (const file of allFiles) {
+      try {
+        const hash = await $`git hash-object ${file} 2>/dev/null || stat -f '%m' ${file} 2>/dev/null || echo ''`.text();
+        files.set(file, hash.trim());
+      } catch {}
+    }
+  } catch {}
+  return { files };
+}
+function getModifiedFilesSinceSnapshot(before, after) {
+  const changedFiles = [];
+  for (const [file, hash] of after.files) {
+    const prevHash = before.files.get(file);
+    if (prevHash !== hash) {
+      changedFiles.push(file);
+    }
+  }
+  for (const [file] of before.files) {
+    if (!after.files.has(file)) {
+      changedFiles.push(file);
+    }
+  }
+  return changedFiles;
+}
+function extractErrors(output) {
+  const errors = [];
+  const lines = output.split(`
+`);
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    if (lower.includes("error:") || lower.includes("failed:") || lower.includes("exception:") || lower.includes("typeerror") || lower.includes("syntaxerror") || lower.includes("referenceerror") || lower.includes("test") && lower.includes("fail")) {
+      const cleaned = line.trim().substring(0, 200);
+      if (cleaned && !errors.includes(cleaned)) {
+        errors.push(cleaned);
+      }
+    }
+  }
+  return errors.slice(0, 10);
+}
+async function executeSdkIteration(options) {
+  const { client: client3, prompt: prompt2, model: model2, streamOutput: streamOutput2, compactTools } = options;
+  const toolCounts = new Map;
+  const errors = [];
+  let output = "";
+  let lastPrintedAt = Date.now();
+  let lastToolSummaryAt = 0;
+  const toolSummaryIntervalMs = 3000;
+  const heartbeatIntervalMs = 1e4;
+  const maybePrintToolSummary = (force = false) => {
+    if (!compactTools || toolCounts.size === 0)
+      return;
+    const now = Date.now();
+    if (!force && now - lastToolSummaryAt < toolSummaryIntervalMs) {
+      return;
+    }
+    const summary = formatToolSummary(toolCounts);
+    if (summary) {
+      console.log(`| Tools    ${summary}`);
+      lastPrintedAt = now;
+      lastToolSummaryAt = now;
+    }
+  };
+  const heartbeatTimer = setInterval(() => {
+    const now = Date.now();
+    if (now - lastPrintedAt >= heartbeatIntervalMs) {
+      console.log("| ...");
+      lastPrintedAt = now;
+    }
+  }, heartbeatIntervalMs);
+  try {
+    const result = await executePrompt({
+      client: client3.client,
+      prompt: prompt2,
+      model: model2,
+      onEvent: (event) => {
+        if (!streamOutput2)
+          return;
+        if (event.type === "tool_start" && event.toolName) {
+          toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
+          if (compactTools) {
+            maybePrintToolSummary();
+          } else {
+            console.log(`| ${formatEvent(event)}`);
+          }
+          lastPrintedAt = Date.now();
+        }
+        if (event.type === "text" && event.content) {
+          console.log(event.content);
+          lastPrintedAt = Date.now();
+        }
+      }
+    });
+    clearInterval(heartbeatTimer);
+    output = result.output;
+    for (const [tool, count] of result.toolCounts) {
+      toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + count);
+    }
+    if (result.errors.length > 0) {
+      errors.push(...result.errors);
+    }
+    if (compactTools) {
+      maybePrintToolSummary(true);
+    }
+    return {
+      output,
+      toolCounts,
+      exitCode: result.exitCode,
+      errors
+    };
+  } catch (error) {
+    clearInterval(heartbeatTimer);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(errorMessage);
+    return {
+      output,
+      toolCounts,
+      exitCode: 1,
+      errors
+    };
+  }
+}
+async function runRalphLoop() {
+  const existingState = loadState();
+  const resuming = !!existingState?.active;
+  if (resuming) {
+    minIterations = existingState.minIterations;
+    maxIterations = existingState.maxIterations;
+    completionPromise = existingState.completionPromise;
+    abortPromise = existingState.abortPromise ?? "";
+    tasksMode = existingState.tasksMode;
+    taskPromise = existingState.taskPromise;
+    prompt = existingState.prompt;
+    promptTemplatePath = existingState.promptTemplate ?? "";
+    model = existingState.model;
+    if (existingState.supervisor) {
+      supervisorEnabled = existingState.supervisor.enabled;
+      supervisorModel = existingState.supervisor.model;
+      supervisorNoActionPromise = existingState.supervisor.noActionPromise;
+      supervisorSuggestionPromise = existingState.supervisor.suggestionPromise;
+      supervisorMemoryLimit = existingState.supervisor.memoryLimit;
+      supervisorPromptTemplatePath = existingState.supervisor.promptTemplate ?? "";
+    }
+    console.log(`\uD83D\uDD04 Resuming Ralph loop from ${statePath}`);
+  }
+  const initialModel = model;
+  const effectiveSupervisorModel = supervisorModel || initialModel;
+  const supervisorConfig = {
+    enabled: supervisorEnabled,
+    model: effectiveSupervisorModel,
+    noActionPromise: supervisorNoActionPromise,
+    suggestionPromise: supervisorSuggestionPromise,
+    memoryLimit: supervisorMemoryLimit,
+    promptTemplate: supervisorPromptTemplatePath || undefined
+  };
+  console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
+\u2551                    Ralph Wiggum Loop                            \u2551
+\u2551         Iterative AI Development with OpenCode                    \u2551
+\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
+`);
+  const state = resuming && existingState ? existingState : {
+    active: true,
+    iteration: 1,
+    minIterations,
+    maxIterations,
+    completionPromise,
+    abortPromise: abortPromise || undefined,
+    tasksMode,
+    taskPromise,
+    prompt,
+    promptTemplate: promptTemplatePath || undefined,
+    startedAt: new Date().toISOString(),
+    model: initialModel,
+    supervisor: supervisorConfig,
+    supervisorState: {
+      enabled: supervisorConfig.enabled,
+      pausedForDecision: false
+    }
+  };
+  if (resuming && existingState) {
+    state.supervisor = supervisorConfig;
+    state.supervisorState = existingState.supervisorState ?? {
+      enabled: supervisorConfig.enabled,
+      pausedForDecision: false
+    };
+  }
+  if (!resuming) {
+    saveState(state);
+  }
+  if (tasksMode && !existsSync2(tasksPath)) {
+    if (!existsSync2(stateDir)) {
+      mkdirSync(stateDir, { recursive: true });
+    }
+    writeFileSync(tasksPath, `# Ralph Tasks
+
+Add your tasks below using: \`ralph --add-task "description"\`
+`);
+    console.log(`\uD83D\uDCCB Created tasks file: ${tasksPath}`);
+  }
+  const history = resuming ? loadHistory() : {
+    iterations: [],
+    totalDurationMs: 0,
+    struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
+  };
+  if (!resuming) {
+    saveHistory(history);
+  }
+  const promptPreview = prompt.replace(/\s+/g, " ").substring(0, 80) + (prompt.length > 80 ? "..." : "");
+  if (promptSource) {
+    console.log(`Task: ${promptSource}`);
+    console.log(`Preview: ${promptPreview}`);
+  } else {
+    console.log(`Task: ${promptPreview}`);
+    console.log(`Completion promise: ${completionPromise}`);
+    if (tasksMode) {
+      console.log(`Tasks mode: ENABLED`);
+      console.log(`Task promise: ${taskPromise}`);
+    }
+    console.log(`Min iterations: ${minIterations}`);
+    console.log(`Max iterations: ${maxIterations > 0 ? maxIterations : "unlimited"}`);
+    if (initialModel)
+      console.log(`Model: ${initialModel}`);
+    if (supervisorConfig.enabled) {
+      console.log(`Supervisor: ENABLED${supervisorConfig.model ? ` / ${supervisorConfig.model}` : ""}`);
+    }
+    if (disablePlugins) {
+      console.log("OpenCode plugins: non-auth plugins disabled");
+    }
+    if (allowAllPermissions)
+      console.log("Permissions: auto-approve all tools");
+    console.log("");
+    console.log("Starting loop... (Ctrl+C to stop)");
+    console.log("\u2550".repeat(68));
+  }
+  let sdkClient = null;
+  try {
+    console.log("\uD83D\uDE80 Initializing OpenCode SDK...");
+    sdkClient = await createSdkClient({
+      model: initialModel || undefined,
+      filterPlugins: disablePlugins,
+      allowAllPermissions
+    });
+    console.log(`\u2705 SDK client ready (${sdkClient.server.url})`);
+  } catch (error) {
+    console.error("\u274C Failed to initialize SDK client:", error);
+    console.error("SDK initialization failed. Please ensure OpenCode is properly installed and configured.");
+    process.exit(1);
+  }
+  let stopping = false;
+  process.on("SIGINT", () => {
+    if (stopping) {
+      console.log(`
+Force stopping...`);
+      process.exit(1);
+    }
+    stopping = true;
+    console.log(`
+Gracefully stopping Ralph loop...`);
+    if (sdkClient) {
+      try {
+        console.log("\uD83E\uDDF9 Closing SDK server...");
+        sdkClient.server.close();
+      } catch {}
+    }
+    clearState();
+    console.log("Loop cancelled.");
+    process.exit(0);
+  });
+  if (state.supervisorState?.pausedForDecision && state.supervisorState.pauseIteration) {
+    console.log(`\u23F8\uFE0F  Resuming in supervisor-decision wait mode (iteration ${state.supervisorState.pauseIteration})`);
+    const pausedIteration = state.supervisorState.pauseIteration;
+    const decisionResult = await waitForSupervisorDecisionIfNeeded(state, pausedIteration);
+    if (state.supervisorState.pauseReason === "completion_detected_with_pending_supervisor_suggestion") {
+      if (decisionResult.approvedAppliedCount > 0) {
+        console.log("\uD83D\uDD04 Supervisor-approved changes were applied while paused. Continuing loop.");
+        state.iteration++;
+        saveState(state);
+      } else {
+        console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
+        console.log(`\u2551  \u2705 Completion promise confirmed after supervisor decisions`);
+        console.log(`\u2551  Task completed in ${state.iteration} iteration(s)`);
+        console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+        console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
+        clearState();
+        clearHistory();
+        clearContext();
+        return;
+      }
+    }
+  }
+  while (true) {
+    if (maxIterations > 0 && state.iteration > maxIterations) {
+      console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
+      console.log(`\u2551  Max iterations (${maxIterations}) reached. Loop stopped.`);
+      console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+      console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
+      clearState();
+      break;
+    }
+    const iterInfo = maxIterations > 0 ? ` / ${maxIterations}` : "";
+    const minInfo = minIterations > 1 && state.iteration < minIterations ? ` (min: ${minIterations})` : "";
+    console.log(`
+\uD83D\uDD04 Iteration ${state.iteration}${iterInfo}${minInfo}`);
+    console.log("\u2500".repeat(68));
+    const contextAtStart = loadContext();
+    const snapshotBefore = await captureFileSnapshot();
+    let currentModel = state.model;
+    const fullPrompt = buildPrompt(state);
+    const iterationStart = Date.now();
+    let result = "";
+    let stderr = "";
+    let toolCounts = new Map;
+    let exitCode = 0;
+    try {
+      console.log("\uD83D\uDE80 Using OpenCode SDK for execution...");
+      const sdkResult = await executeSdkIteration({
+        client: sdkClient,
+        prompt: fullPrompt,
+        model: currentModel,
+        streamOutput,
+        compactTools: !verboseTools
+      });
+      result = sdkResult.output;
+      toolCounts = sdkResult.toolCounts;
+      exitCode = sdkResult.exitCode;
+      stderr = sdkResult.errors.join(`
+`);
+      if (stderr && !streamOutput) {
+        console.error(stderr);
+      }
+      if (result && !streamOutput) {
+        console.log(result);
+      }
+      const combinedOutput = `${result}
+${stderr}`;
+      const completionDetected = checkCompletion(combinedOutput, completionPromise);
+      const abortDetected = abortPromise ? checkCompletion(combinedOutput, abortPromise) : false;
+      const taskCompletionDetected = tasksMode ? checkCompletion(combinedOutput, taskPromise) : false;
+      let shouldComplete = completionDetected;
+      const iterationDuration = Date.now() - iterationStart;
+      printIterationSummary({
+        iteration: state.iteration,
+        elapsedMs: iterationDuration,
+        toolCounts,
+        exitCode,
+        completionDetected,
+        model: currentModel
+      });
+      const snapshotAfter = await captureFileSnapshot();
+      const filesModified = getModifiedFilesSinceSnapshot(snapshotBefore, snapshotAfter);
+      const errors = extractErrors(combinedOutput);
+      const iterationRecord = {
+        iteration: state.iteration,
+        startedAt: new Date(iterationStart).toISOString(),
+        endedAt: new Date().toISOString(),
+        durationMs: iterationDuration,
+        model: currentModel,
+        toolsUsed: Object.fromEntries(toolCounts),
+        filesModified,
+        exitCode,
+        completionDetected,
+        errors
+      };
+      history.iterations.push(iterationRecord);
+      history.totalDurationMs += iterationDuration;
+      if (filesModified.length === 0) {
+        history.struggleIndicators.noProgressIterations++;
+      } else {
+        history.struggleIndicators.noProgressIterations = 0;
+      }
+      if (iterationDuration < 30000) {
+        history.struggleIndicators.shortIterations++;
+      } else {
+        history.struggleIndicators.shortIterations = 0;
+      }
+      if (errors.length === 0) {
+        history.struggleIndicators.repeatedErrors = {};
+      } else {
+        for (const error of errors) {
+          const key = error.substring(0, 100);
+          history.struggleIndicators.repeatedErrors[key] = (history.struggleIndicators.repeatedErrors[key] || 0) + 1;
+        }
+      }
+      saveHistory(history);
+      const struggle = history.struggleIndicators;
+      if (state.iteration > 2 && (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3)) {
+        console.log(`
+\u26A0\uFE0F  Potential struggle detected:`);
+        if (struggle.noProgressIterations >= 3) {
+          console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
+        }
+        if (struggle.shortIterations >= 3) {
+          console.log(`   - ${struggle.shortIterations} very short iterations`);
+        }
+        console.log(`   \uD83D\uDCA1 Tip: Use 'ralph --add-context "hint"' in another terminal to guide the agent`);
+      }
+      if (detectPlaceholderPluginError(combinedOutput) || detectSdkPlaceholderPluginError(combinedOutput)) {
+        console.error(`
+\u274C OpenCode tried to load the legacy 'ralph-wiggum' plugin. This package is CLI-only.`);
+        console.error("Remove 'ralph-wiggum' from your opencode.json plugin list, or re-run with --no-plugins.");
+        clearState();
+        process.exit(1);
+      }
+      if (detectSdkModelNotFoundError(combinedOutput)) {
+        console.error(`
+\u274C Model configuration error detected.`);
+        console.error("   The agent could not find a valid model to use.");
+        console.error(`
+   To fix this:`);
+        console.error("   1. Set a default model in ~/.config/opencode/opencode.json:");
+        console.error('      { "model": "your-provider/model-name" }');
+        console.error('   2. Or use the --model flag: ralph "task" --model provider/model');
+        console.error(`
+   See the OpenCode documentation for available models.`);
+        clearState();
+        process.exit(1);
+      }
+      if (exitCode !== 0) {
+        console.warn(`
+\u26A0\uFE0F  OpenCode exited with code ${exitCode}. Continuing to next iteration.`);
+      }
+      const supervisorCfg = state.supervisor;
+      if (supervisorCfg?.enabled) {
+        if (!sdkClient) {
+          console.warn("\u26A0\uFE0F  Supervisor mode requires SDK client. Skipping supervisor run.");
+        } else {
+          console.log(`
+\uD83D\uDD75\uFE0F  Running supervisor${supervisorCfg.model ? ` / ${supervisorCfg.model}` : ""}...`);
+          const supervisorResult = await runSupervisorOnce(state, supervisorCfg, history, combinedOutput, sdkClient);
+          const lastRunAt = new Date().toISOString();
+          state.supervisorState = {
+            ...state.supervisorState ?? { enabled: true, pausedForDecision: false },
+            enabled: true,
+            lastRunAt,
+            lastRunIteration: state.iteration
+          };
+          if (!supervisorResult.ok) {
+            console.warn(`\u26A0\uFE0F  Supervisor failed: ${supervisorResult.error}`);
+            appendSupervisorMemory({
+              iteration: state.iteration,
+              summary: "Supervisor run failed",
+              decision: supervisorResult.error ?? "unknown error",
+              timestamp: lastRunAt
+            }, supervisorCfg.memoryLimit);
+          } else if (supervisorResult.noAction) {
+            console.log("\u2705 Supervisor: no action needed");
+            appendSupervisorMemory({
+              iteration: state.iteration,
+              summary: "No additional actions suggested",
+              decision: "no_action",
+              timestamp: lastRunAt
+            }, supervisorCfg.memoryLimit);
+          } else if (supervisorResult.suggestion) {
+            const suggestion = {
+              id: buildSupervisorSuggestionId(state.iteration),
+              iteration: state.iteration,
+              kind: supervisorResult.suggestion.kind,
+              title: supervisorResult.suggestion.title,
+              details: supervisorResult.suggestion.details,
+              proposedChanges: supervisorResult.suggestion.proposedChanges,
+              status: "pending",
+              createdAt: lastRunAt
+            };
+            const suggestionStore = loadSupervisorSuggestions();
+            if (suggestionStore.parseError) {
+              console.warn(`\u26A0\uFE0F  Could not save suggestion: ${suggestionStore.parseError}`);
+            } else {
+              suggestionStore.suggestions.push(suggestion);
+              saveSupervisorSuggestions(suggestionStore);
+              console.log(`\uD83D\uDCCC Supervisor suggestion created: ${suggestion.id}`);
+              console.log(`   Approve: ralph --approve-suggestion ${suggestion.id}`);
+              console.log(`   Reject:  ralph --reject-suggestion ${suggestion.id}`);
+              appendSupervisorMemory({
+                iteration: state.iteration,
+                summary: `${suggestion.kind}: ${suggestion.title}`,
+                decision: "pending_user_decision",
+                timestamp: lastRunAt
+              }, supervisorCfg.memoryLimit);
+              if (completionDetected) {
+                state.supervisorState = {
+                  ...state.supervisorState ?? { enabled: true, pausedForDecision: false },
+                  enabled: true,
+                  pausedForDecision: true,
+                  pauseIteration: state.iteration,
+                  pauseReason: "completion_detected_with_pending_supervisor_suggestion",
+                  lastRunAt,
+                  lastRunIteration: state.iteration
+                };
+                saveState(state);
+                const decisionResult = await waitForSupervisorDecisionIfNeeded(state, state.iteration);
+                if (decisionResult.approvedAppliedCount > 0) {
+                  shouldComplete = false;
+                  console.log("\uD83D\uDD04 Supervisor-approved changes detected. Continuing loop instead of exiting.");
+                } else {
+                  console.log("\u2705 All supervisor suggestions resolved without approved changes.");
+                }
+              }
+            }
+          }
+        }
+      }
+      if (abortDetected) {
+        console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
+        console.log(`\u2551  \u26D4 Abort signal detected: <promise>${abortPromise}</promise>`);
+        console.log(`\u2551  Loop aborted after ${state.iteration} iteration(s)`);
+        console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+        console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
+        clearState();
+        clearHistory();
+        clearContext();
+        process.exit(1);
+      }
+      if (taskCompletionDetected && !completionDetected) {
+        console.log(`
+\uD83D\uDD04 Task completion detected: <promise>${taskPromise}</promise>`);
+        console.log(`   Moving to next task in iteration ${state.iteration + 1}...`);
+      }
+      if (shouldComplete) {
+        if (state.iteration < minIterations) {
+          console.log(`
+\u23F3 Completion promise detected, but minimum iterations (${minIterations}) not yet reached.`);
+          console.log(`   Continuing to iteration ${state.iteration + 1}...`);
+        } else {
+          console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
+          console.log(`\u2551  \u2705 Completion promise detected: <promise>${completionPromise}</promise>`);
+          console.log(`\u2551  Task completed in ${state.iteration} iteration(s)`);
+          console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+          console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
+          clearState();
+          clearHistory();
+          clearContext();
+          break;
+        }
+      }
+      if (contextAtStart) {
+        console.log(`\uD83D\uDCDD Context was consumed this iteration`);
+        clearContext();
+      }
+      if (autoCommit) {
+        try {
+          const status = await $`git status --porcelain`.text();
+          if (status.trim()) {
+            await $`git add -A`;
+            await $`git commit -m "Ralph iteration ${state.iteration}: work in progress"`.quiet();
+            console.log(`\uD83D\uDCDD Auto-committed changes`);
+          }
+        } catch {}
+      }
+      state.iteration++;
+      saveState(state);
+      await new Promise((r) => setTimeout(r, 1000));
+    } catch (error) {
+      console.error(`
+\u274C Error in iteration ${state.iteration}:`, error);
+      console.log("Continuing to next iteration...");
+      const iterationDuration = Date.now() - iterationStart;
+      const errorRecord = {
+        iteration: state.iteration,
+        startedAt: new Date(iterationStart).toISOString(),
+        endedAt: new Date().toISOString(),
+        durationMs: iterationDuration,
+        model: currentModel,
+        toolsUsed: {},
+        filesModified: [],
+        exitCode: -1,
+        completionDetected: false,
+        errors: [String(error).substring(0, 200)]
+      };
+      history.iterations.push(errorRecord);
+      history.totalDurationMs += iterationDuration;
+      saveHistory(history);
+      state.iteration++;
+      saveState(state);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  if (sdkClient) {
+    try {
+      console.log("\uD83E\uDDF9 Closing SDK server...");
+      sdkClient.server.close();
+    } catch {}
+  }
+}
+if (import.meta.main) {
+  runRalphLoop().catch((error) => {
+    console.error("Fatal error:", error);
+    clearState();
+    process.exit(1);
+  });
 }

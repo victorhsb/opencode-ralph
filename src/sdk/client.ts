@@ -9,6 +9,7 @@ import { createOpencode } from "@opencode-ai/sdk";
 import type { Config } from "@opencode-ai/sdk";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
+import { createServer } from "net";
 
 export interface SdkClientOptions {
   /** Model identifier (e.g., "openai/gpt-4") */
@@ -76,6 +77,40 @@ function loadPluginsFromExistingConfigs(): string[] {
   return Array.from(new Set(plugins));
 }
 
+async function findAvailablePort(hostname: string, preferredPort: number): Promise<number> {
+  const listenOnce = (port: number): Promise<number> => {
+    return new Promise((resolve, reject) => {
+      const server = createServer();
+      server.unref();
+
+      server.once("error", reject);
+      server.listen(port, hostname, () => {
+        const address = server.address();
+        const resolvedPort = typeof address === "object" && address ? address.port : port;
+        server.close((closeError) => {
+          if (closeError) {
+            reject(closeError);
+            return;
+          }
+          resolve(resolvedPort);
+        });
+      });
+    });
+  };
+
+  try {
+    return await listenOnce(preferredPort);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+    if (code && code !== "EADDRINUSE") {
+      throw error;
+    }
+    return await listenOnce(0);
+  }
+}
+
 /**
  * Create SDK client with configuration.
  *
@@ -85,6 +120,10 @@ function loadPluginsFromExistingConfigs(): string[] {
  * - filterPlugins: SDK config.plugin (filter to auth-only)
  */
 export async function createSdkClient(options: SdkClientOptions): Promise<SdkClient> {
+  const hostname = options.hostname ?? "127.0.0.1";
+  const requestedPort = options.port ?? 4096;
+  const port = await findAvailablePort(hostname, requestedPort);
+
   const config: Config = {
     model: options.model,
   };
@@ -117,8 +156,8 @@ export async function createSdkClient(options: SdkClientOptions): Promise<SdkCli
   }
 
   const opencode = await createOpencode({
-    hostname: options.hostname ?? "127.0.0.1",
-    port: options.port ?? 4096,
+    hostname,
+    port,
     timeout: 10000, // 10 second timeout for server startup
     config,
   });

@@ -1,6 +1,6 @@
 {
     "name": "@victorhsb/opencode-ralph",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "description": "Ralph Wiggum technique for iterative AI development loops with OpenCode",
     "main": "bin/ralph.js",
     "bin": {
@@ -8,7 +8,7 @@
     },
     "scripts": {
         "start": "bun ralph.ts",
-        "build": "bun build ralph.ts --outfile bin/ralph --compile",
+        "build": "bun build ralph.ts --target bun --outfile bin/ralph.js && bun build ralph.ts --outfile bin/ralph --compile",
         "test": "bun test ./tests/ralph.test.ts",
         "install-local": "bun link"
     },
