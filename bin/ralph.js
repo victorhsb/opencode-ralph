@@ -30,246 +30,6 @@ var __export = (target, all) => {
 var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 var __require = import.meta.require;
 
-// src/sdk/executor.ts
-var exports_executor = {};
-__export(exports_executor, {
-  executePrompt: () => executePrompt
-});
-async function executePrompt(options) {
-  const { client: client3, prompt, model, onEvent, signal } = options;
-  const toolCounts = new Map;
-  const errors = [];
-  let output = "";
-  try {
-    const sessionResponse = await client3.session.create({
-      body: { title: `Ralph iteration ${Date.now()}` }
-    });
-    if (sessionResponse.error || !sessionResponse.data) {
-      errors.push(`Failed to create session: ${sessionResponse.error ?? "Unknown error"}`);
-      return {
-        output,
-        toolCounts,
-        errors,
-        success: false,
-        exitCode: 1
-      };
-    }
-    const sessionId = sessionResponse.data.id;
-    const eventSubscription = await client3.event.subscribe();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    let sessionComplete = false;
-    const eventPromise = (async () => {
-      try {
-        for await (const event of eventSubscription.stream) {
-          if (signal?.aborted)
-            break;
-          const eventType = event?.type;
-          if (eventType === "session.idle" || eventType === "session.error") {
-            sessionComplete = true;
-          }
-          const sdkEvent = parseSdkEvent(event);
-          if (sdkEvent.type === "tool_start" && sdkEvent.toolName) {
-            toolCounts.set(sdkEvent.toolName, (toolCounts.get(sdkEvent.toolName) ?? 0) + 1);
-          }
-          if (sdkEvent.type === "text" && sdkEvent.content) {
-            output += sdkEvent.content;
-          }
-          onEvent?.(sdkEvent);
-          if (sessionComplete) {
-            break;
-          }
-        }
-      } catch (error) {
-        errors.push(`Event stream error: ${error}`);
-      }
-    })();
-    const modelConfig = model ? {
-      providerID: model.split("/")[0] || "openai",
-      modelID: model.split("/")[1] || model
-    } : undefined;
-    const promptResponse = await client3.session.prompt({
-      path: { id: sessionId },
-      body: {
-        model: modelConfig,
-        parts: [{ type: "text", text: prompt }]
-      }
-    });
-    if (promptResponse.error) {
-      errors.push(`Prompt failed: ${promptResponse.error}`);
-      return {
-        output,
-        toolCounts,
-        errors,
-        success: false,
-        exitCode: 1
-      };
-    }
-    const result = promptResponse.data;
-    const timeoutPromise = new Promise((_, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error("Event stream timeout"));
-      }, 30000);
-      signal?.addEventListener("abort", () => {
-        clearTimeout(timeoutId);
-        reject(new Error("Aborted"));
-      });
-    });
-    try {
-      await Promise.race([eventPromise, timeoutPromise]);
-    } catch (error) {
-      if (String(error).includes("Aborted")) {
-        throw error;
-      }
-    }
-    const finalOutput = extractOutputFromMessage(result);
-    return {
-      output: finalOutput || output,
-      toolCounts,
-      errors,
-      success: true,
-      exitCode: 0
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(errorMessage);
-    return {
-      output,
-      toolCounts,
-      errors,
-      success: false,
-      exitCode: 1
-    };
-  }
-}
-function parseSdkEvent(event) {
-  const timestamp = Date.now();
-  if (!event || typeof event !== "object") {
-    return {
-      type: "text",
-      content: "",
-      timestamp
-    };
-  }
-  const eventObj = event;
-  const eventType = typeof eventObj.type === "string" ? eventObj.type : "";
-  const props = eventObj.properties || {};
-  if (eventType === "message.part.delta") {
-    const delta = typeof props.delta === "string" ? props.delta : "";
-    const field = typeof props.field === "string" ? props.field : "";
-    if (field === "text" && delta) {
-      return {
-        type: "text",
-        content: delta,
-        timestamp
-      };
-    }
-    return {
-      type: "text",
-      content: "",
-      timestamp
-    };
-  }
-  if (eventType === "message.part.updated") {
-    const part = props.part || {};
-    const partType = typeof part.type === "string" ? part.type : "";
-    if (partType === "tool_use") {
-      const toolName = typeof part.name === "string" ? part.name : "unknown";
-      return {
-        type: "tool_start",
-        toolName,
-        timestamp
-      };
-    }
-    if (partType === "tool_result") {
-      const toolName = typeof part.name === "string" ? part.name : "unknown";
-      return {
-        type: "tool_end",
-        toolName,
-        timestamp
-      };
-    }
-    if (partType === "text") {
-      const text = typeof part.text === "string" ? part.text : "";
-      const role = typeof part.role === "string" ? part.role : "";
-      if (text && role === "assistant") {
-        return {
-          type: "text",
-          content: text,
-          timestamp
-        };
-      }
-    }
-    if (partType === "reasoning" || partType === "thinking") {
-      const text = typeof part.text === "string" ? part.text : "";
-      if (text) {
-        return {
-          type: "thinking",
-          content: text,
-          timestamp
-        };
-      }
-    }
-  }
-  if (eventType === "session.error") {
-    const error = props.error || {};
-    const errorMessage = typeof error.data?.message === "string" ? error.data.message : typeof error.message === "string" ? error.message : "Unknown error";
-    return {
-      type: "error",
-      content: errorMessage,
-      timestamp
-    };
-  }
-  return {
-    type: "text",
-    content: "",
-    timestamp
-  };
-}
-function extractOutputFromMessage(message) {
-  if (!message || typeof message !== "object") {
-    return "";
-  }
-  const msg = message;
-  const output = [];
-  if (Array.isArray(msg.parts)) {
-    for (const part of msg.parts) {
-      if (typeof part === "object" && part !== null) {
-        const partObj = part;
-        if (partObj.type === "text" && typeof partObj.text === "string") {
-          output.push(partObj.text);
-        }
-        if (partObj.type === "thinking" && typeof partObj.thinking === "string") {
-          output.push(`[Thinking: ${partObj.thinking}]`);
-        }
-        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
-          output.push(`[Tool ${partObj.name} executed]`);
-        }
-      }
-    }
-  }
-  if (output.length === 0 && Array.isArray(msg.content)) {
-    for (const part of msg.content) {
-      if (typeof part === "object" && part !== null) {
-        const partObj = part;
-        if (partObj.type === "text" && typeof partObj.text === "string") {
-          output.push(partObj.text);
-        }
-        if (partObj.type === "thinking" && typeof partObj.thinking === "string") {
-          output.push(`[Thinking: ${partObj.thinking}]`);
-        }
-        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
-          output.push(`[Tool ${partObj.name} executed]`);
-        }
-      }
-    }
-  }
-  if (output.length === 0 && typeof msg.text === "string") {
-    output.push(msg.text);
-  }
-  return output.join(`
-`);
-}
-
 // src/config/config.ts
 var exports_config = {};
 __export(exports_config, {
@@ -352,6 +112,7 @@ __export(exports_state, {
   saveHistory: () => saveHistory,
   loadState: () => loadState,
   loadHistory: () => loadHistory,
+  getStateDir: () => getStateDir,
   ensureStateDir: () => ensureStateDir,
   clearState: () => clearState,
   clearHistory: () => clearHistory
@@ -805,6 +566,246 @@ function detectSdkPlaceholderPluginError(output) {
   return output.includes("ralph-wiggum is not yet ready for use");
 }
 
+// src/sdk/executor.ts
+var exports_executor = {};
+__export(exports_executor, {
+  executePrompt: () => executePrompt
+});
+async function executePrompt(options) {
+  const { client: client3, prompt, model, onEvent, signal } = options;
+  const toolCounts = new Map;
+  const errors = [];
+  let output = "";
+  try {
+    const sessionResponse = await client3.session.create({
+      body: { title: `Ralph iteration ${Date.now()}` }
+    });
+    if (sessionResponse.error || !sessionResponse.data) {
+      errors.push(`Failed to create session: ${sessionResponse.error ?? "Unknown error"}`);
+      return {
+        output,
+        toolCounts,
+        errors,
+        success: false,
+        exitCode: 1
+      };
+    }
+    const sessionId = sessionResponse.data.id;
+    const eventSubscription = await client3.event.subscribe();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    let sessionComplete = false;
+    const eventPromise = (async () => {
+      try {
+        for await (const event of eventSubscription.stream) {
+          if (signal?.aborted)
+            break;
+          const eventType = event?.type;
+          if (eventType === "session.idle" || eventType === "session.error") {
+            sessionComplete = true;
+          }
+          const sdkEvent = parseSdkEvent(event);
+          if (sdkEvent.type === "tool_start" && sdkEvent.toolName) {
+            toolCounts.set(sdkEvent.toolName, (toolCounts.get(sdkEvent.toolName) ?? 0) + 1);
+          }
+          if (sdkEvent.type === "text" && sdkEvent.content) {
+            output += sdkEvent.content;
+          }
+          onEvent?.(sdkEvent);
+          if (sessionComplete) {
+            break;
+          }
+        }
+      } catch (error) {
+        errors.push(`Event stream error: ${error}`);
+      }
+    })();
+    const modelConfig = model ? {
+      providerID: model.split("/")[0] || "openai",
+      modelID: model.split("/")[1] || model
+    } : undefined;
+    const promptResponse = await client3.session.prompt({
+      path: { id: sessionId },
+      body: {
+        model: modelConfig,
+        parts: [{ type: "text", text: prompt }]
+      }
+    });
+    if (promptResponse.error) {
+      errors.push(`Prompt failed: ${promptResponse.error}`);
+      return {
+        output,
+        toolCounts,
+        errors,
+        success: false,
+        exitCode: 1
+      };
+    }
+    const result = promptResponse.data;
+    const timeoutPromise = new Promise((_, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error("Event stream timeout"));
+      }, 30000);
+      signal?.addEventListener("abort", () => {
+        clearTimeout(timeoutId);
+        reject(new Error("Aborted"));
+      });
+    });
+    try {
+      await Promise.race([eventPromise, timeoutPromise]);
+    } catch (error) {
+      if (String(error).includes("Aborted")) {
+        throw error;
+      }
+    }
+    const finalOutput = extractOutputFromMessage(result);
+    return {
+      output: finalOutput || output,
+      toolCounts,
+      errors,
+      success: true,
+      exitCode: 0
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(errorMessage);
+    return {
+      output,
+      toolCounts,
+      errors,
+      success: false,
+      exitCode: 1
+    };
+  }
+}
+function parseSdkEvent(event) {
+  const timestamp = Date.now();
+  if (!event || typeof event !== "object") {
+    return {
+      type: "text",
+      content: "",
+      timestamp
+    };
+  }
+  const eventObj = event;
+  const eventType = typeof eventObj.type === "string" ? eventObj.type : "";
+  const props = eventObj.properties || {};
+  if (eventType === "message.part.delta") {
+    const delta = typeof props.delta === "string" ? props.delta : "";
+    const field = typeof props.field === "string" ? props.field : "";
+    if (field === "text" && delta) {
+      return {
+        type: "text",
+        content: delta,
+        timestamp
+      };
+    }
+    return {
+      type: "text",
+      content: "",
+      timestamp
+    };
+  }
+  if (eventType === "message.part.updated") {
+    const part = props.part || {};
+    const partType = typeof part.type === "string" ? part.type : "";
+    if (partType === "tool_use") {
+      const toolName = typeof part.name === "string" ? part.name : "unknown";
+      return {
+        type: "tool_start",
+        toolName,
+        timestamp
+      };
+    }
+    if (partType === "tool_result") {
+      const toolName = typeof part.name === "string" ? part.name : "unknown";
+      return {
+        type: "tool_end",
+        toolName,
+        timestamp
+      };
+    }
+    if (partType === "text") {
+      const text = typeof part.text === "string" ? part.text : "";
+      const role = typeof part.role === "string" ? part.role : "";
+      if (text && role === "assistant") {
+        return {
+          type: "text",
+          content: text,
+          timestamp
+        };
+      }
+    }
+    if (partType === "reasoning" || partType === "thinking") {
+      const text = typeof part.text === "string" ? part.text : "";
+      if (text) {
+        return {
+          type: "thinking",
+          content: text,
+          timestamp
+        };
+      }
+    }
+  }
+  if (eventType === "session.error") {
+    const error = props.error || {};
+    const errorMessage = typeof error.data?.message === "string" ? error.data.message : typeof error.message === "string" ? error.message : "Unknown error";
+    return {
+      type: "error",
+      content: errorMessage,
+      timestamp
+    };
+  }
+  return {
+    type: "text",
+    content: "",
+    timestamp
+  };
+}
+function extractOutputFromMessage(message) {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+  const msg = message;
+  const output = [];
+  if (Array.isArray(msg.parts)) {
+    for (const part of msg.parts) {
+      if (typeof part === "object" && part !== null) {
+        const partObj = part;
+        if (partObj.type === "text" && typeof partObj.text === "string") {
+          output.push(partObj.text);
+        }
+        if (partObj.type === "thinking" && typeof partObj.thinking === "string") {
+          output.push(`[Thinking: ${partObj.thinking}]`);
+        }
+        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
+          output.push(`[Tool ${partObj.name} executed]`);
+        }
+      }
+    }
+  }
+  if (output.length === 0 && Array.isArray(msg.content)) {
+    for (const part of msg.content) {
+      if (typeof part === "object" && part !== null) {
+        const partObj = part;
+        if (partObj.type === "text" && typeof partObj.text === "string") {
+          output.push(partObj.text);
+        }
+        if (partObj.type === "thinking" && typeof partObj.thinking === "string") {
+          output.push(`[Thinking: ${partObj.thinking}]`);
+        }
+        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
+          output.push(`[Tool ${partObj.name} executed]`);
+        }
+      }
+    }
+  }
+  if (output.length === 0 && typeof msg.text === "string") {
+    output.push(msg.text);
+  }
+  return output.join(`
+`);
+}
+
 // src/supervisor/supervisor.ts
 var exports_supervisor = {};
 __export(exports_supervisor, {
@@ -1159,8 +1160,7 @@ var init_supervisor = __esm(() => {
 });
 
 // ralph.ts
-var {$: $2 } = globalThis.Bun;
-import { existsSync as existsSync8, readFileSync as readFileSync8 } from "fs";
+import { existsSync as existsSync10, readFileSync as readFileSync9 } from "fs";
 import { join as join3 } from "path";
 // node_modules/@opencode-ai/sdk/dist/gen/core/serverSentEvents.gen.js
 var createSseClient = ({ onSseError, onSseEvent, responseTransformer, responseValidator, sseDefaultRetryDelay, sseMaxRetryAttempts, sseMaxRetryDelay, sseSleepFn, url, ...options }) => {
@@ -2471,11 +2471,13 @@ async function createSdkClient(options) {
   };
 }
 
-// ralph.ts
+// src/loop/loop.ts
 init_state();
 init_tasks();
 init_context();
 init_supervisor();
+var {$: $2 } = globalThis.Bun;
+import { existsSync as existsSync7 } from "fs";
 
 // src/prompts/prompts.ts
 init_context();
@@ -2621,278 +2623,570 @@ function getModifiedFilesSinceSnapshot(before, after) {
   return changedFiles;
 }
 
-// src/cli/commands.ts
-init_state();
-init_supervisor();
-init_context();
-init_tasks();
-init_config();
-import { readFileSync as readFileSync7, existsSync as existsSync7 } from "fs";
-function handleStatusCommand(args) {
-  const state = loadState();
-  const history = loadHistory();
-  const contextPath = getContextPath();
-  const context = existsSync7(contextPath) ? readFileSync7(contextPath, "utf-8").trim() : null;
-  const supervisorSuggestions = loadSupervisorSuggestions();
-  const pendingSuggestions = supervisorSuggestions.suggestions.filter((s) => s.status === "pending").length;
-  const showTasks = args.includes("--tasks") || args.includes("-t") || state?.tasksMode;
-  const tasksPath = getTasksFilePath();
+// src/loop/iteration.ts
+async function executeSdkIteration(options) {
+  const { client: client3, prompt, model, streamOutput, compactTools } = options;
+  const toolCounts = new Map;
+  const errors = [];
+  let output = "";
+  let lastPrintedAt = Date.now();
+  let lastToolSummaryAt = 0;
+  const toolSummaryIntervalMs = 3000;
+  const heartbeatIntervalMs = 1e4;
+  const maybePrintToolSummary = (force = false) => {
+    if (!compactTools || toolCounts.size === 0)
+      return;
+    const now = Date.now();
+    if (!force && now - lastToolSummaryAt < toolSummaryIntervalMs) {
+      return;
+    }
+    const summary = formatToolSummary2(toolCounts);
+    if (summary) {
+      console.log(`| Tools    ${summary}`);
+      lastPrintedAt = now;
+      lastToolSummaryAt = now;
+    }
+  };
+  const heartbeatTimer = setInterval(() => {
+    const now = Date.now();
+    if (now - lastPrintedAt >= heartbeatIntervalMs) {
+      console.log("| ...");
+      lastPrintedAt = now;
+    }
+  }, heartbeatIntervalMs);
+  try {
+    const result = await executePrompt({
+      client: client3.client,
+      prompt,
+      model,
+      onEvent: (event) => {
+        if (!streamOutput)
+          return;
+        if (event.type === "tool_start" && event.toolName) {
+          toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
+          if (compactTools) {
+            maybePrintToolSummary();
+          } else {
+            console.log(`| ${event.type === "tool_start" ? `\uD83D\uDD27 ${event.toolName}...` : ""}`);
+          }
+          lastPrintedAt = Date.now();
+        }
+        if (event.type === "text" && event.content) {
+          process.stdout.write(event.content);
+          lastPrintedAt = Date.now();
+        }
+      }
+    });
+    clearInterval(heartbeatTimer);
+    process.stdout.write(`
+`);
+    output = result.output;
+    for (const [tool, count] of result.toolCounts) {
+      toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + count);
+    }
+    if (result.errors.length > 0) {
+      errors.push(...result.errors);
+    }
+    if (compactTools) {
+      maybePrintToolSummary(true);
+    }
+    return {
+      output,
+      toolCounts,
+      exitCode: result.exitCode,
+      errors
+    };
+  } catch (error) {
+    clearInterval(heartbeatTimer);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(errorMessage);
+    return {
+      output,
+      toolCounts,
+      exitCode: 1,
+      errors
+    };
+  }
+}
+function formatToolSummary2(toolCounts, maxItems = 6) {
+  if (!toolCounts.size)
+    return "";
+  const entries = Array.from(toolCounts.entries()).sort((a, b) => b[1] - a[1]);
+  const shown = entries.slice(0, maxItems);
+  const remaining = entries.length - shown.length;
+  const parts = shown.map(([name, count]) => `${name} ${count}`);
+  if (remaining > 0) {
+    parts.push(`+${remaining} more`);
+  }
+  return parts.join(" \u2022 ");
+}
+
+// src/loop/loop.ts
+async function runRalphLoop(options) {
+  const {
+    prompt,
+    promptTemplatePath,
+    model,
+    supervisorModel,
+    supervisorEnabled,
+    supervisorNoActionPromise,
+    supervisorSuggestionPromise,
+    supervisorMemoryLimit,
+    supervisorPromptTemplatePath,
+    minIterations,
+    maxIterations,
+    completionPromise,
+    abortPromise,
+    tasksMode,
+    taskPromise,
+    streamOutput,
+    verboseTools,
+    autoCommit,
+    allowAllPermissions,
+    sdkClient
+  } = options;
+  const existingState = loadState();
+  const resuming = !!existingState?.active;
+  if (resuming) {
+    console.log(`\uD83D\uDD04 Resuming Ralph loop from ${getStateDir()}`);
+  }
+  const initialModel = model;
+  const effectiveSupervisorModel = supervisorModel || initialModel;
+  const supervisorConfig = {
+    enabled: supervisorEnabled,
+    model: effectiveSupervisorModel,
+    noActionPromise: supervisorNoActionPromise,
+    suggestionPromise: supervisorSuggestionPromise,
+    memoryLimit: supervisorMemoryLimit,
+    promptTemplate: supervisorPromptTemplatePath || undefined
+  };
   console.log(`
 \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
-\u2551                    Ralph Wiggum Status                           \u2551
+\u2551                    Ralph Wiggum Loop                            \u2551
+\u2551         Iterative AI Development with OpenCode                    \u2551
 \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 `);
-  if (state?.active) {
-    const elapsed = Date.now() - new Date(state.startedAt).getTime();
-    const elapsedStr = formatDurationLong(elapsed);
-    console.log(`\uD83D\uDD04 ACTIVE LOOP`);
-    console.log(`   Iteration:    ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"}`);
-    console.log(`   Started:      ${state.startedAt}`);
-    console.log(`   Elapsed:      ${elapsedStr}`);
-    console.log(`   Promise:      ${state.completionPromise}`);
-    if (state.model)
-      console.log(`   Model:        ${state.model}`);
-    if (state.tasksMode) {
-      console.log(`   Tasks Mode:   ENABLED`);
-      console.log(`   Task Promise: ${state.taskPromise}`);
+  const state = resuming && existingState ? existingState : {
+    active: true,
+    iteration: 1,
+    minIterations,
+    maxIterations,
+    completionPromise,
+    abortPromise: abortPromise || undefined,
+    tasksMode,
+    taskPromise,
+    prompt,
+    promptTemplate: promptTemplatePath || undefined,
+    startedAt: new Date().toISOString(),
+    model: initialModel,
+    supervisor: supervisorConfig,
+    supervisorState: {
+      enabled: supervisorConfig.enabled,
+      pausedForDecision: false
     }
-    console.log(`   Prompt:       ${state.prompt.substring(0, 60)}${state.prompt.length > 60 ? "..." : ""}`);
-    if (state.supervisor?.enabled) {
-      console.log(`   Supervisor:   ENABLED`);
-      if (state.supervisor.model) {
-        console.log(`   Sup Model:    ${state.supervisor.model}`);
-      }
-      console.log(`   Sup Pending:  ${pendingSuggestions}`);
-      if (state.supervisorState?.pausedForDecision) {
-        console.log(`   Sup Status:   waiting for user decision`);
+  };
+  if (resuming && existingState) {
+    state.supervisor = supervisorConfig;
+    state.supervisorState = existingState.supervisorState ?? {
+      enabled: supervisorConfig.enabled,
+      pausedForDecision: false
+    };
+  }
+  if (!resuming) {
+    saveState(state);
+  }
+  const tasksPath = getTasksPath();
+  if (tasksMode && !existsSync7(tasksPath)) {
+    ensureTasksFile();
+    console.log(`\uD83D\uDCCB Created tasks file: ${tasksPath}`);
+  }
+  const history = resuming ? loadHistory() : {
+    iterations: [],
+    totalDurationMs: 0,
+    struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
+  };
+  if (!resuming) {
+    saveHistory(history);
+  }
+  if (!resuming) {
+    const promptPreview = prompt.replace(/\s+/g, " ").substring(0, 80) + (prompt.length > 80 ? "..." : "");
+    console.log(`Task: ${promptPreview}`);
+    console.log(`Completion promise: ${completionPromise}`);
+    if (tasksMode) {
+      console.log(`Tasks mode: ENABLED`);
+      console.log(`Task promise: ${taskPromise}`);
+    }
+    console.log(`Min iterations: ${minIterations}`);
+    console.log(`Max iterations: ${maxIterations > 0 ? maxIterations : "unlimited"}`);
+    if (initialModel)
+      console.log(`Model: ${initialModel}`);
+    if (supervisorConfig.enabled) {
+      console.log(`Supervisor: ENABLED${supervisorConfig.model ? ` / ${supervisorConfig.model}` : ""}`);
+    }
+    if (options.disablePlugins) {
+      console.log("OpenCode plugins: non-auth plugins disabled");
+    }
+    if (allowAllPermissions)
+      console.log("Permissions: auto-approve all tools");
+    console.log("");
+    console.log("Starting loop... (Ctrl+C to stop)");
+    console.log("\u2550".repeat(68));
+  }
+  let stopping = false;
+  process.on("SIGINT", () => {
+    if (stopping) {
+      console.log(`
+Force stopping...`);
+      process.exit(1);
+    }
+    stopping = true;
+    console.log(`
+Gracefully stopping Ralph loop...`);
+    try {
+      console.log("\uD83E\uDDF9 Closing SDK server...");
+      sdkClient.server.close();
+    } catch {}
+    clearState();
+    console.log("Loop cancelled.");
+    process.exit(0);
+  });
+  if (state.supervisorState?.pausedForDecision && state.supervisorState.pauseIteration) {
+    console.log(`\u23F8\uFE0F  Resuming in supervisor-decision wait mode (iteration ${state.supervisorState.pauseIteration})`);
+    const pausedIteration = state.supervisorState.pauseIteration;
+    const decisionResult = await waitForSupervisorDecisionIfNeeded(state, pausedIteration);
+    if (state.supervisorState.pauseReason === "completion_detected_with_pending_supervisor_suggestion") {
+      if (decisionResult.approvedAppliedCount > 0) {
+        console.log("\uD83D\uDD04 Supervisor-approved changes were applied while paused. Continuing loop.");
+        state.iteration++;
+        saveState(state);
+      } else {
+        console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
+        console.log(`\u2551  \u2705 Completion promise confirmed after supervisor decisions`);
+        console.log(`\u2551  Task completed in ${state.iteration} iteration(s)`);
+        console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+        console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
+        clearState();
+        clearHistory();
+        clearContext();
+        return;
       }
     }
-  } else {
-    console.log(`\u23F9\uFE0F  No active loop`);
   }
-  if (context) {
+  while (true) {
+    if (maxIterations > 0 && state.iteration > maxIterations) {
+      console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
+      console.log(`\u2551  Max iterations (${maxIterations}) reached. Loop stopped.`);
+      console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+      console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
+      clearState();
+      break;
+    }
+    const iterInfo = maxIterations > 0 ? ` / ${maxIterations}` : "";
+    const minInfo = minIterations > 1 && state.iteration < minIterations ? ` (min: ${minIterations})` : "";
     console.log(`
-\uD83D\uDCDD PENDING CONTEXT (will be injected next iteration):`);
-    console.log(`   ${context.split(`
-`).join(`
-   `)}`);
-  }
-  if (supervisorSuggestions.parseError) {
-    console.log(`
-\u26A0\uFE0F  SUPERVISOR DATA WARNING: ${supervisorSuggestions.parseError}`);
-  }
-  if (showTasks) {
-    if (existsSync7(tasksPath)) {
-      try {
-        const tasks = loadTasks();
-        if (tasks.length > 0) {
-          console.log(`
-\uD83D\uDCCB CURRENT TASKS:`);
-          for (let i = 0;i < tasks.length; i++) {
-            const task = tasks[i];
-            const statusIcon = task.status === "complete" ? "\u2705" : task.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
-            console.log(`   ${i + 1}. ${statusIcon} ${task.text}`);
-            for (const subtask of task.subtasks) {
-              const subStatusIcon = subtask.status === "complete" ? "\u2705" : subtask.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
-              console.log(`      ${subStatusIcon} ${subtask.text}`);
+\uD83D\uDD04 Iteration ${state.iteration}${iterInfo}${minInfo}`);
+    console.log("\u2500".repeat(68));
+    const contextAtStart = loadContext();
+    const snapshotBefore = await captureFileSnapshot();
+    let currentModel = state.model;
+    const fullPrompt = buildPrompt(state, promptTemplatePath);
+    const iterationStart = Date.now();
+    try {
+      console.log("\uD83D\uDE80 Using OpenCode SDK for execution...");
+      const sdkResult = await executeSdkIteration({
+        client: sdkClient,
+        prompt: fullPrompt,
+        model: currentModel,
+        streamOutput,
+        compactTools: !verboseTools
+      });
+      const result = sdkResult.output;
+      const toolCounts = sdkResult.toolCounts;
+      const exitCode = sdkResult.exitCode;
+      const stderr = sdkResult.errors.join(`
+`);
+      if (stderr && !streamOutput) {
+        console.error(stderr);
+      }
+      if (result && !streamOutput) {
+        console.log(result);
+      }
+      const combinedOutput = `${result}
+${stderr}`;
+      const completionDetected = checkCompletion(combinedOutput, completionPromise);
+      const abortDetected = abortPromise ? checkCompletion(combinedOutput, abortPromise) : false;
+      const taskCompletionDetected = tasksMode ? checkCompletion(combinedOutput, taskPromise) : false;
+      let shouldComplete = completionDetected;
+      const iterationDuration = Date.now() - iterationStart;
+      printIterationSummary({
+        iteration: state.iteration,
+        elapsedMs: iterationDuration,
+        toolCounts,
+        exitCode,
+        completionDetected,
+        model: currentModel
+      });
+      const snapshotAfter = await captureFileSnapshot();
+      const filesModified = getModifiedFilesSinceSnapshot(snapshotBefore, snapshotAfter);
+      const errors = extractErrors(combinedOutput);
+      const iterationRecord = {
+        iteration: state.iteration,
+        startedAt: new Date(iterationStart).toISOString(),
+        endedAt: new Date().toISOString(),
+        durationMs: iterationDuration,
+        model: currentModel,
+        toolsUsed: Object.fromEntries(toolCounts),
+        filesModified,
+        exitCode,
+        completionDetected,
+        errors
+      };
+      history.iterations.push(iterationRecord);
+      history.totalDurationMs += iterationDuration;
+      if (filesModified.length === 0) {
+        history.struggleIndicators.noProgressIterations++;
+      } else {
+        history.struggleIndicators.noProgressIterations = 0;
+      }
+      if (iterationDuration < 30000) {
+        history.struggleIndicators.shortIterations++;
+      } else {
+        history.struggleIndicators.shortIterations = 0;
+      }
+      if (errors.length === 0) {
+        history.struggleIndicators.repeatedErrors = {};
+      } else {
+        for (const error of errors) {
+          const key = error.substring(0, 100);
+          history.struggleIndicators.repeatedErrors[key] = (history.struggleIndicators.repeatedErrors[key] || 0) + 1;
+        }
+      }
+      saveHistory(history);
+      const struggle = history.struggleIndicators;
+      if (state.iteration > 2 && (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3)) {
+        console.log(`
+\u26A0\uFE0F  Potential struggle detected:`);
+        if (struggle.noProgressIterations >= 3) {
+          console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
+        }
+        if (struggle.shortIterations >= 3) {
+          console.log(`   - ${struggle.shortIterations} very short iterations`);
+        }
+        console.log(`   \uD83D\uDCA1 Tip: Use 'ralph --add-context "hint"' in another terminal to guide the agent`);
+      }
+      if (detectPlaceholderPluginError(combinedOutput) || detectSdkPlaceholderPluginError(combinedOutput)) {
+        console.error(`
+\u274C OpenCode tried to load legacy 'ralph-wiggum' plugin. This package is CLI-only.`);
+        console.error("Remove 'ralph-wiggum' from your opencode.json plugin list, or re-run with --no-plugins.");
+        clearState();
+        process.exit(1);
+      }
+      if (detectSdkModelNotFoundError(combinedOutput)) {
+        console.error(`
+\u274C Model configuration error detected.`);
+        console.error("   The agent could not find a valid model to use.");
+        console.error(`
+   To fix this:`);
+        console.error("   1. Set a default model in ~/.config/opencode/opencode.json:");
+        console.error('      { "model": "your-provider/model-name" }');
+        console.error('   2. Or use --model flag: ralph "task" --model provider/model');
+        console.error(`
+   See OpenCode documentation for available models.`);
+        clearState();
+        process.exit(1);
+      }
+      if (exitCode !== 0) {
+        console.warn(`
+\u26A0\uFE0F  OpenCode exited with code ${exitCode}. Continuing to next iteration.`);
+      }
+      const supervisorCfg = state.supervisor;
+      if (supervisorCfg?.enabled) {
+        console.log(`
+\uD83D\uDD75\uFE0F  Running supervisor${supervisorCfg.model ? ` / ${supervisorCfg.model}` : ""}...`);
+        const supervisorResult = await runSupervisorOnce(state, supervisorCfg, history, combinedOutput, sdkClient);
+        const lastRunAt = new Date().toISOString();
+        state.supervisorState = {
+          ...state.supervisorState ?? { enabled: true, pausedForDecision: false },
+          enabled: true,
+          lastRunAt,
+          lastRunIteration: state.iteration
+        };
+        if (!supervisorResult.ok) {
+          console.warn(`\u26A0\uFE0F  Supervisor failed: ${supervisorResult.error}`);
+          appendSupervisorMemory({
+            iteration: state.iteration,
+            summary: "Supervisor run failed",
+            decision: supervisorResult.error ?? "unknown error",
+            timestamp: lastRunAt
+          }, supervisorCfg.memoryLimit);
+        } else if (supervisorResult.noAction) {
+          console.log("\u2705 Supervisor: no action needed");
+          appendSupervisorMemory({
+            iteration: state.iteration,
+            summary: "No additional actions suggested",
+            decision: "no_action",
+            timestamp: lastRunAt
+          }, supervisorCfg.memoryLimit);
+        } else if (supervisorResult.suggestion) {
+          const suggestion = {
+            id: buildSupervisorSuggestionId(state.iteration),
+            iteration: state.iteration,
+            kind: supervisorResult.suggestion.kind,
+            title: supervisorResult.suggestion.title,
+            details: supervisorResult.suggestion.details,
+            proposedChanges: supervisorResult.suggestion.proposedChanges,
+            status: "pending",
+            createdAt: lastRunAt
+          };
+          const suggestionStore = loadSupervisorSuggestions();
+          if (suggestionStore.parseError) {
+            console.warn(`\u26A0\uFE0F  Could not save suggestion: ${suggestionStore.parseError}`);
+          } else {
+            suggestionStore.suggestions.push(suggestion);
+            saveSupervisorSuggestions(suggestionStore);
+            console.log(`\uD83D\uDCCC Supervisor suggestion created: ${suggestion.id}`);
+            console.log(`   Approve: ralph --approve-suggestion ${suggestion.id}`);
+            console.log(`   Reject:  ralph --reject-suggestion ${suggestion.id}`);
+            appendSupervisorMemory({
+              iteration: state.iteration,
+              summary: `${suggestion.kind}: ${suggestion.title}`,
+              decision: "pending_user_decision",
+              timestamp: lastRunAt
+            }, supervisorCfg.memoryLimit);
+            if (completionDetected) {
+              state.supervisorState = {
+                ...state.supervisorState ?? { enabled: true, pausedForDecision: false },
+                enabled: true,
+                pausedForDecision: true,
+                pauseIteration: state.iteration,
+                pauseReason: "completion_detected_with_pending_supervisor_suggestion",
+                lastRunAt,
+                lastRunIteration: state.iteration
+              };
+              saveState(state);
+              const decisionResult = await waitForSupervisorDecisionIfNeeded(state, state.iteration);
+              if (decisionResult.approvedAppliedCount > 0) {
+                shouldComplete = false;
+                console.log("\uD83D\uDD04 Supervisor-approved changes detected. Continuing loop instead of exiting.");
+              } else {
+                console.log("\u2705 All supervisor suggestions resolved without approved changes.");
+              }
             }
           }
-          const complete = tasks.filter((t) => t.status === "complete").length;
-          const inProgress = tasks.filter((t) => t.status === "in-progress").length;
+        }
+      }
+      if (abortDetected) {
+        console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
+        console.log(`\u2551  \u26D4 Abort signal detected: <promise>${abortPromise}</promise>`);
+        console.log(`\u2551  Loop aborted after ${state.iteration} iteration(s)`);
+        console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+        console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
+        clearState();
+        clearHistory();
+        clearContext();
+        process.exit(1);
+      }
+      if (taskCompletionDetected && !completionDetected) {
+        console.log(`
+\uD83D\uDD04 Task completion detected: <promise>${taskPromise}</promise>`);
+        console.log(`   Moving to next task in iteration ${state.iteration + 1}...`);
+      }
+      if (shouldComplete) {
+        if (state.iteration < minIterations) {
           console.log(`
-   Progress: ${complete}/${tasks.length} complete, ${inProgress} in progress`);
+\u23F3 Completion promise detected, but minimum iterations (${minIterations}) not yet reached.`);
+          console.log(`   Continuing to iteration ${state.iteration + 1}...`);
         } else {
           console.log(`
-\uD83D\uDCCB CURRENT TASKS: (no tasks found)`);
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
+          console.log(`\u2551  \u2705 Completion promise detected: <promise>${completionPromise}</promise>`);
+          console.log(`\u2551  Task completed in ${state.iteration} iteration(s)`);
+          console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
+          console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
+          clearState();
+          clearHistory();
+          clearContext();
+          break;
         }
-      } catch {
-        console.log(`
-\uD83D\uDCCB CURRENT TASKS: (error reading tasks)`);
       }
-    } else {
-      console.log(`
-\uD83D\uDCCB CURRENT TASKS: (no tasks file found)`);
+      if (contextAtStart) {
+        console.log(`\uD83D\uDCDD Context was consumed this iteration`);
+        clearContext();
+      }
+      if (autoCommit) {
+        try {
+          const status = await $2`git status --porcelain`.text();
+          if (status.trim()) {
+            await $2`git add -A`;
+            await $2`git commit -m "Ralph iteration ${state.iteration}: work in progress"`.quiet();
+            console.log(`\uD83D\uDCDD Auto-committed changes`);
+          }
+        } catch {}
+      }
+      state.iteration++;
+      saveState(state);
+      await new Promise((r) => setTimeout(r, 1000));
+    } catch (error) {
+      console.error(`
+\u274C Error in iteration ${state.iteration}:`, error);
+      console.log("Continuing to next iteration...");
+      const iterationDuration = Date.now() - iterationStart;
+      const errorRecord = {
+        iteration: state.iteration,
+        startedAt: new Date(iterationStart).toISOString(),
+        endedAt: new Date().toISOString(),
+        durationMs: iterationDuration,
+        model: currentModel,
+        toolsUsed: {},
+        filesModified: [],
+        exitCode: -1,
+        completionDetected: false,
+        errors: [String(error).substring(0, 200)]
+      };
+      history.iterations.push(errorRecord);
+      history.totalDurationMs += iterationDuration;
+      saveHistory(history);
+      state.iteration++;
+      saveState(state);
+      await new Promise((r) => setTimeout(r, 2000));
     }
-  }
-  if (history.iterations.length > 0) {
-    console.log(`
-\uD83D\uDCCA HISTORY (${history.iterations.length} iterations)`);
-    console.log(`   Total time:   ${formatDurationLong(history.totalDurationMs)}`);
-    const recent = history.iterations.slice(-5);
-    console.log(`
-   Recent iterations:`);
-    for (const iter of recent) {
-      const tools = Object.entries(iter.toolsUsed).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k}(${v})`).join(" ");
-      const modelLabel = iter.model ?? "unknown";
-      console.log(`   #${iter.iteration}  ${formatDurationLong(iter.durationMs)}  ${modelLabel}  ${tools || "no tools"}`);
-    }
-    const struggle = history.struggleIndicators;
-    const hasRepeatedErrors = Object.values(struggle.repeatedErrors).some((count) => count >= 2);
-    if (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3 || hasRepeatedErrors) {
-      console.log(`
-\u26A0\uFE0F  STRUGGLE INDICATORS:`);
-      if (struggle.noProgressIterations >= 3) {
-        console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
-      }
-      if (struggle.shortIterations >= 3) {
-        console.log(`   - ${struggle.shortIterations} very short iterations (< 30s)`);
-      }
-      const topErrors = Object.entries(struggle.repeatedErrors).filter(([_, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3);
-      for (const [error, count] of topErrors) {
-        console.log(`   - Same error ${count}x: "${error.substring(0, 50)}..."`);
-      }
-      console.log(`
-   \uD83D\uDCA1 Consider using: ralph --add-context "your hint here"`);
-    }
-  }
-  console.log("");
-}
-function handleListSuggestionsCommand() {
-  const store = loadSupervisorSuggestions();
-  if (store.parseError) {
-    console.error(`Error: ${store.parseError}`);
-    process.exit(1);
-  }
-  displaySupervisorSuggestions(store);
-}
-function handleApproveSuggestionCommand(args) {
-  const approveSuggestionIdx = args.indexOf("--approve-suggestion");
-  const suggestionId = args[approveSuggestionIdx + 1];
-  if (!suggestionId) {
-    console.error("Error: --approve-suggestion requires an ID");
-    process.exit(1);
-  }
-  const store = loadSupervisorSuggestions();
-  if (store.parseError) {
-    console.error(`Error: ${store.parseError}`);
-    process.exit(1);
-  }
-  const suggestion = store.suggestions.find((s) => s.id === suggestionId);
-  if (!suggestion) {
-    console.error(`Error: Suggestion not found: ${suggestionId}`);
-    process.exit(1);
-  }
-  if (suggestion.status !== "pending") {
-    console.error(`Error: Suggestion ${suggestionId} is already ${suggestion.status}`);
-    process.exit(1);
-  }
-  suggestion.status = "approved";
-  suggestion.decidedAt = new Date().toISOString();
-  const applied = applyApprovedSuggestion(suggestion);
-  const { saveSupervisorSuggestions: saveSupervisorSuggestions2 } = (init_supervisor(), __toCommonJS(exports_supervisor));
-  if (applied.ok) {
-    suggestion.status = "applied";
-    suggestion.appliedAt = new Date().toISOString();
-    console.log(`\u2705 Suggestion ${suggestionId} approved and applied`);
-  } else {
-    suggestion.status = "failed";
-    suggestion.error = applied.error;
-    console.error(`\u274C Suggestion ${suggestionId} approved but failed to apply: ${applied.error}`);
-    saveSupervisorSuggestions2(store);
-    process.exit(1);
-  }
-  saveSupervisorSuggestions2(store);
-}
-function handleRejectSuggestionCommand(args) {
-  const rejectSuggestionIdx = args.indexOf("--reject-suggestion");
-  const suggestionId = args[rejectSuggestionIdx + 1];
-  if (!suggestionId) {
-    console.error("Error: --reject-suggestion requires an ID");
-    process.exit(1);
-  }
-  const store = loadSupervisorSuggestions();
-  if (store.parseError) {
-    console.error(`Error: ${store.parseError}`);
-    process.exit(1);
-  }
-  const suggestion = store.suggestions.find((s) => s.id === suggestionId);
-  if (!suggestion) {
-    console.error(`Error: Suggestion not found: ${suggestionId}`);
-    process.exit(1);
-  }
-  if (suggestion.status !== "pending") {
-    console.error(`Error: Suggestion ${suggestionId} is already ${suggestion.status}`);
-    process.exit(1);
-  }
-  suggestion.status = "rejected";
-  suggestion.decidedAt = new Date().toISOString();
-  const { saveSupervisorSuggestions: saveSupervisorSuggestions2 } = (init_supervisor(), __toCommonJS(exports_supervisor));
-  saveSupervisorSuggestions2(store);
-  console.log(`\u2705 Suggestion ${suggestionId} rejected`);
-}
-function handleAddContextCommand(args) {
-  const addContextIdx = args.indexOf("--add-context");
-  const contextText = args[addContextIdx + 1];
-  if (!contextText) {
-    console.error("Error: --add-context requires a text argument");
-    console.error('Usage: ralph --add-context "Your context or hint here"');
-    process.exit(1);
-  }
-  const { appendContext: appendContext2 } = (init_context(), __toCommonJS(exports_context));
-  appendContext2(contextText);
-  const contextPath = getContextPath();
-  console.log(`\u2705 Context added for next iteration`);
-  console.log(`   File: ${contextPath}`);
-  const state = loadState();
-  if (state?.active) {
-    console.log(`   Will be picked up in iteration ${state.iteration + 1}`);
-  } else {
-    console.log(`   Will be used when loop starts`);
-  }
-}
-function handleClearContextCommand() {
-  const contextPath = getContextPath();
-  if (existsSync7(contextPath)) {
-    __require("fs").unlinkSync(contextPath);
-    console.log(`\u2705 Context cleared`);
-  } else {
-    console.log(`\u2139\uFE0F  No pending context to clear`);
-  }
-}
-function handleListTasksCommand() {
-  const tasksPath = getTasksFilePath();
-  if (!existsSync7(tasksPath)) {
-    console.log("No tasks file found. Use --add-task to create your first task.");
-    process.exit(0);
   }
   try {
-    const tasks = loadTasks();
-    displayTasksWithIndices(tasks);
-  } catch (error) {
-    console.error("Error reading tasks file:", error);
-    process.exit(1);
-  }
+    console.log("\uD83E\uDDF9 Closing SDK server...");
+    sdkClient.server.close();
+  } catch {}
 }
-function handleAddTaskCommand(args) {
-  const addTaskIdx = args.indexOf("--add-task");
-  const taskDescription = args[addTaskIdx + 1];
-  if (!taskDescription) {
-    console.error("Error: --add-task requires a description");
-    console.error('Usage: ralph --add-task "Task description"');
+
+// src/io/files.ts
+import { existsSync as existsSync8, readFileSync as readFileSync7 } from "fs";
+import { statSync } from "fs";
+function readPromptFile(path) {
+  if (!existsSync8(path)) {
+    console.error(`Error: Prompt file not found: ${path}`);
     process.exit(1);
   }
   try {
-    appendTask(taskDescription);
-    console.log(`\u2705 Task added: "${taskDescription}"`);
-  } catch (error) {
-    console.error("Error adding task:", error);
+    const stat = statSync(path);
+    if (!stat.isFile()) {
+      console.error(`Error: Prompt path is not a file: ${path}`);
+      process.exit(1);
+    }
+  } catch {
+    console.error(`Error: Unable to stat prompt file: ${path}`);
     process.exit(1);
   }
-}
-function handleRemoveTaskCommand(args) {
-  const removeTaskIdx = args.indexOf("--remove-task");
-  const taskIndexStr = args[removeTaskIdx + 1];
-  if (!taskIndexStr || isNaN(parseInt(taskIndexStr))) {
-    console.error("Error: --remove-task requires a valid number");
-    console.error("Usage: ralph --remove-task 3");
-    process.exit(1);
-  }
-  const taskIndex = parseInt(taskIndexStr);
   try {
-    removeTask(taskIndex);
-    console.log(`\u2705 Removed task ${taskIndex} and its subtasks`);
-  } catch (error) {
-    console.error("Error removing task:", error);
+    const content = readFileSync7(path, "utf-8");
+    if (!content.trim()) {
+      console.error(`Error: Prompt file is empty: ${path}`);
+      process.exit(1);
+    }
+    return content;
+  } catch {
+    console.error(`Error: Unable to read prompt file: ${path}`);
     process.exit(1);
   }
 }
@@ -3129,10 +3423,285 @@ var RALPH_ARGS_SCHEMA = [
   }
 ];
 
+// src/cli/commands.ts
+init_state();
+init_supervisor();
+init_context();
+init_tasks();
+init_config();
+import { readFileSync as readFileSync8, existsSync as existsSync9 } from "fs";
+function handleStatusCommand(args) {
+  const state = loadState();
+  const history = loadHistory();
+  const contextPath = getContextPath();
+  const context = existsSync9(contextPath) ? readFileSync8(contextPath, "utf-8").trim() : null;
+  const supervisorSuggestions = loadSupervisorSuggestions();
+  const pendingSuggestions = supervisorSuggestions.suggestions.filter((s) => s.status === "pending").length;
+  const showTasks = args.includes("--tasks") || args.includes("-t") || state?.tasksMode;
+  const tasksPath = getTasksFilePath();
+  console.log(`
+\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
+\u2551                    Ralph Wiggum Status                           \u2551
+\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
+`);
+  if (state?.active) {
+    const elapsed = Date.now() - new Date(state.startedAt).getTime();
+    const elapsedStr = formatDurationLong(elapsed);
+    console.log(`\uD83D\uDD04 ACTIVE LOOP`);
+    console.log(`   Iteration:    ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"}`);
+    console.log(`   Started:      ${state.startedAt}`);
+    console.log(`   Elapsed:      ${elapsedStr}`);
+    console.log(`   Promise:      ${state.completionPromise}`);
+    if (state.model)
+      console.log(`   Model:        ${state.model}`);
+    if (state.tasksMode) {
+      console.log(`   Tasks Mode:   ENABLED`);
+      console.log(`   Task Promise: ${state.taskPromise}`);
+    }
+    console.log(`   Prompt:       ${state.prompt.substring(0, 60)}${state.prompt.length > 60 ? "..." : ""}`);
+    if (state.supervisor?.enabled) {
+      console.log(`   Supervisor:   ENABLED`);
+      if (state.supervisor.model) {
+        console.log(`   Sup Model:    ${state.supervisor.model}`);
+      }
+      console.log(`   Sup Pending:  ${pendingSuggestions}`);
+      if (state.supervisorState?.pausedForDecision) {
+        console.log(`   Sup Status:   waiting for user decision`);
+      }
+    }
+  } else {
+    console.log(`\u23F9\uFE0F  No active loop`);
+  }
+  if (context) {
+    console.log(`
+\uD83D\uDCDD PENDING CONTEXT (will be injected next iteration):`);
+    console.log(`   ${context.split(`
+`).join(`
+   `)}`);
+  }
+  if (supervisorSuggestions.parseError) {
+    console.log(`
+\u26A0\uFE0F  SUPERVISOR DATA WARNING: ${supervisorSuggestions.parseError}`);
+  }
+  if (showTasks) {
+    if (existsSync9(tasksPath)) {
+      try {
+        const tasks = loadTasks();
+        if (tasks.length > 0) {
+          console.log(`
+\uD83D\uDCCB CURRENT TASKS:`);
+          for (let i = 0;i < tasks.length; i++) {
+            const task = tasks[i];
+            const statusIcon = task.status === "complete" ? "\u2705" : task.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
+            console.log(`   ${i + 1}. ${statusIcon} ${task.text}`);
+            for (const subtask of task.subtasks) {
+              const subStatusIcon = subtask.status === "complete" ? "\u2705" : subtask.status === "in-progress" ? "\uD83D\uDD04" : "\u23F8\uFE0F";
+              console.log(`      ${subStatusIcon} ${subtask.text}`);
+            }
+          }
+          const complete = tasks.filter((t) => t.status === "complete").length;
+          const inProgress = tasks.filter((t) => t.status === "in-progress").length;
+          console.log(`
+   Progress: ${complete}/${tasks.length} complete, ${inProgress} in progress`);
+        } else {
+          console.log(`
+\uD83D\uDCCB CURRENT TASKS: (no tasks found)`);
+        }
+      } catch {
+        console.log(`
+\uD83D\uDCCB CURRENT TASKS: (error reading tasks)`);
+      }
+    } else {
+      console.log(`
+\uD83D\uDCCB CURRENT TASKS: (no tasks file found)`);
+    }
+  }
+  if (history.iterations.length > 0) {
+    console.log(`
+\uD83D\uDCCA HISTORY (${history.iterations.length} iterations)`);
+    console.log(`   Total time:   ${formatDurationLong(history.totalDurationMs)}`);
+    const recent = history.iterations.slice(-5);
+    console.log(`
+   Recent iterations:`);
+    for (const iter of recent) {
+      const tools = Object.entries(iter.toolsUsed).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k}(${v})`).join(" ");
+      const modelLabel = iter.model ?? "unknown";
+      console.log(`   #${iter.iteration}  ${formatDurationLong(iter.durationMs)}  ${modelLabel}  ${tools || "no tools"}`);
+    }
+    const struggle = history.struggleIndicators;
+    const hasRepeatedErrors = Object.values(struggle.repeatedErrors).some((count) => count >= 2);
+    if (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3 || hasRepeatedErrors) {
+      console.log(`
+\u26A0\uFE0F  STRUGGLE INDICATORS:`);
+      if (struggle.noProgressIterations >= 3) {
+        console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
+      }
+      if (struggle.shortIterations >= 3) {
+        console.log(`   - ${struggle.shortIterations} very short iterations (< 30s)`);
+      }
+      const topErrors = Object.entries(struggle.repeatedErrors).filter(([_, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      for (const [error, count] of topErrors) {
+        console.log(`   - Same error ${count}x: "${error.substring(0, 50)}..."`);
+      }
+      console.log(`
+   \uD83D\uDCA1 Consider using: ralph --add-context "your hint here"`);
+    }
+  }
+  console.log("");
+}
+function handleListSuggestionsCommand() {
+  const store = loadSupervisorSuggestions();
+  if (store.parseError) {
+    console.error(`Error: ${store.parseError}`);
+    process.exit(1);
+  }
+  displaySupervisorSuggestions(store);
+}
+function handleApproveSuggestionCommand(args) {
+  const approveSuggestionIdx = args.indexOf("--approve-suggestion");
+  const suggestionId = args[approveSuggestionIdx + 1];
+  if (!suggestionId) {
+    console.error("Error: --approve-suggestion requires an ID");
+    process.exit(1);
+  }
+  const store = loadSupervisorSuggestions();
+  if (store.parseError) {
+    console.error(`Error: ${store.parseError}`);
+    process.exit(1);
+  }
+  const suggestion = store.suggestions.find((s) => s.id === suggestionId);
+  if (!suggestion) {
+    console.error(`Error: Suggestion not found: ${suggestionId}`);
+    process.exit(1);
+  }
+  if (suggestion.status !== "pending") {
+    console.error(`Error: Suggestion ${suggestionId} is already ${suggestion.status}`);
+    process.exit(1);
+  }
+  suggestion.status = "approved";
+  suggestion.decidedAt = new Date().toISOString();
+  const applied = applyApprovedSuggestion(suggestion);
+  const { saveSupervisorSuggestions: saveSupervisorSuggestions2 } = (init_supervisor(), __toCommonJS(exports_supervisor));
+  if (applied.ok) {
+    suggestion.status = "applied";
+    suggestion.appliedAt = new Date().toISOString();
+    console.log(`\u2705 Suggestion ${suggestionId} approved and applied`);
+  } else {
+    suggestion.status = "failed";
+    suggestion.error = applied.error;
+    console.error(`\u274C Suggestion ${suggestionId} approved but failed to apply: ${applied.error}`);
+    saveSupervisorSuggestions2(store);
+    process.exit(1);
+  }
+  saveSupervisorSuggestions2(store);
+}
+function handleRejectSuggestionCommand(args) {
+  const rejectSuggestionIdx = args.indexOf("--reject-suggestion");
+  const suggestionId = args[rejectSuggestionIdx + 1];
+  if (!suggestionId) {
+    console.error("Error: --reject-suggestion requires an ID");
+    process.exit(1);
+  }
+  const store = loadSupervisorSuggestions();
+  if (store.parseError) {
+    console.error(`Error: ${store.parseError}`);
+    process.exit(1);
+  }
+  const suggestion = store.suggestions.find((s) => s.id === suggestionId);
+  if (!suggestion) {
+    console.error(`Error: Suggestion not found: ${suggestionId}`);
+    process.exit(1);
+  }
+  if (suggestion.status !== "pending") {
+    console.error(`Error: Suggestion ${suggestionId} is already ${suggestion.status}`);
+    process.exit(1);
+  }
+  suggestion.status = "rejected";
+  suggestion.decidedAt = new Date().toISOString();
+  const { saveSupervisorSuggestions: saveSupervisorSuggestions2 } = (init_supervisor(), __toCommonJS(exports_supervisor));
+  saveSupervisorSuggestions2(store);
+  console.log(`\u2705 Suggestion ${suggestionId} rejected`);
+}
+function handleAddContextCommand(args) {
+  const addContextIdx = args.indexOf("--add-context");
+  const contextText = args[addContextIdx + 1];
+  if (!contextText) {
+    console.error("Error: --add-context requires a text argument");
+    console.error('Usage: ralph --add-context "Your context or hint here"');
+    process.exit(1);
+  }
+  const { appendContext: appendContext2 } = (init_context(), __toCommonJS(exports_context));
+  appendContext2(contextText);
+  const contextPath = getContextPath();
+  console.log(`\u2705 Context added for next iteration`);
+  console.log(`   File: ${contextPath}`);
+  const state = loadState();
+  if (state?.active) {
+    console.log(`   Will be picked up in iteration ${state.iteration + 1}`);
+  } else {
+    console.log(`   Will be used when loop starts`);
+  }
+}
+function handleClearContextCommand() {
+  const contextPath = getContextPath();
+  if (existsSync9(contextPath)) {
+    __require("fs").unlinkSync(contextPath);
+    console.log(`\u2705 Context cleared`);
+  } else {
+    console.log(`\u2139\uFE0F  No pending context to clear`);
+  }
+}
+function handleListTasksCommand() {
+  const tasksPath = getTasksFilePath();
+  if (!existsSync9(tasksPath)) {
+    console.log("No tasks file found. Use --add-task to create your first task.");
+    process.exit(0);
+  }
+  try {
+    const tasks = loadTasks();
+    displayTasksWithIndices(tasks);
+  } catch (error) {
+    console.error("Error reading tasks file:", error);
+    process.exit(1);
+  }
+}
+function handleAddTaskCommand(args) {
+  const addTaskIdx = args.indexOf("--add-task");
+  const taskDescription = args[addTaskIdx + 1];
+  if (!taskDescription) {
+    console.error("Error: --add-task requires a description");
+    console.error('Usage: ralph --add-task "Task description"');
+    process.exit(1);
+  }
+  try {
+    appendTask(taskDescription);
+    console.log(`\u2705 Task added: "${taskDescription}"`);
+  } catch (error) {
+    console.error("Error adding task:", error);
+    process.exit(1);
+  }
+}
+function handleRemoveTaskCommand(args) {
+  const removeTaskIdx = args.indexOf("--remove-task");
+  const taskIndexStr = args[removeTaskIdx + 1];
+  if (!taskIndexStr || isNaN(parseInt(taskIndexStr))) {
+    console.error("Error: --remove-task requires a valid number");
+    console.error("Usage: ralph --remove-task 3");
+    process.exit(1);
+  }
+  const taskIndex = parseInt(taskIndexStr);
+  try {
+    removeTask(taskIndex);
+    console.log(`\u2705 Removed task ${taskIndex} and its subtasks`);
+  } catch (error) {
+    console.error("Error removing task:", error);
+    process.exit(1);
+  }
+}
+
 // ralph.ts
 var __dirname = "/Users/torugo/go/src/github.com/victorhsb/opencode-ralph";
-var VERSION = process.env.npm_package_version || (existsSync8(join3(__dirname, "package.json")) ? JSON.parse(readFileSync8(join3(__dirname, "package.json"), "utf-8")).version : "2.0.1");
-var tasksPath = getTasksPath();
+var VERSION = process.env.npm_package_version || (existsSync10(join3(__dirname, "package.json")) ? JSON.parse(readFileSync9(join3(__dirname, "package.json"), "utf-8")).version : "2.0.1");
 var args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
   displayHelp(VERSION, RALPH_ARGS_SCHEMA);
@@ -3215,253 +3784,31 @@ var allowAllPermissions = allowAll && !noAllowAll;
 var promptParts = parsed.promptParts;
 var prompt = "";
 var promptSource = "";
-function readPromptFile(path) {
-  if (!existsSync8(path)) {
-    console.error(`Error: Prompt file not found: ${path}`);
-    process.exit(1);
-  }
-  try {
-    const stat = __require("fs").statSync(path);
-    if (!stat.isFile()) {
-      console.error(`Error: Prompt path is not a file: ${path}`);
-      process.exit(1);
-    }
-  } catch {
-    console.error(`Error: Unable to stat prompt file: ${path}`);
-    process.exit(1);
-  }
-  try {
-    const content = readFileSync8(path, "utf-8");
-    if (!content.trim()) {
-      console.error(`Error: Prompt file is empty: ${path}`);
-      process.exit(1);
-    }
-    return content;
-  } catch {
-    console.error(`Error: Unable to read prompt file: ${path}`);
-    process.exit(1);
-  }
-}
 if (promptFile) {
   promptSource = promptFile;
   prompt = readPromptFile(promptFile);
-} else if (promptParts.length === 1 && existsSync8(promptParts[0])) {
+} else if (promptParts.length === 1 && existsSync10(promptParts[0])) {
   promptSource = promptParts[0];
   prompt = readPromptFile(promptParts[0]);
 } else {
   prompt = promptParts.join(" ");
 }
 if (!prompt) {
-  const existingState = loadState();
-  if (existingState?.active) {
-    prompt = existingState.prompt;
-  } else {
-    console.error("Error: No prompt provided");
-    console.error('Usage: ralph "Your task description" [options]');
-    console.error("Run 'ralph --help' for more information");
-    process.exit(1);
-  }
+  console.error("Error: No prompt provided");
+  console.error('Usage: ralph "Your task description" [options]');
+  console.error("Run 'ralph --help' for more information");
+  process.exit(1);
 }
 if (maxIterations > 0 && minIterations > maxIterations) {
   console.error(`Error: --min-iterations (${minIterations}) cannot be greater than --max-iterations (${maxIterations})`);
   process.exit(1);
 }
-async function executeSdkIteration(options) {
-  const { client: client3, prompt: prompt2, model: model2, streamOutput: streamOutput2, compactTools } = options;
-  const toolCounts = new Map;
-  const errors = [];
-  let output = "";
-  let lastPrintedAt = Date.now();
-  let lastToolSummaryAt = 0;
-  const toolSummaryIntervalMs = 3000;
-  const heartbeatIntervalMs = 1e4;
-  const maybePrintToolSummary = (force = false) => {
-    if (!compactTools || toolCounts.size === 0)
-      return;
-    const now = Date.now();
-    if (!force && now - lastToolSummaryAt < toolSummaryIntervalMs) {
-      return;
-    }
-    const summary = formatToolSummary(toolCounts);
-    if (summary) {
-      console.log(`| Tools    ${summary}`);
-      lastPrintedAt = now;
-      lastToolSummaryAt = now;
-    }
-  };
-  const heartbeatTimer = setInterval(() => {
-    const now = Date.now();
-    if (now - lastPrintedAt >= heartbeatIntervalMs) {
-      console.log("| ...");
-      lastPrintedAt = now;
-    }
-  }, heartbeatIntervalMs);
-  try {
-    const result = await executePrompt({
-      client: client3.client,
-      prompt: prompt2,
-      model: model2,
-      onEvent: (event) => {
-        if (!streamOutput2)
-          return;
-        if (event.type === "tool_start" && event.toolName) {
-          toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
-          if (compactTools) {
-            maybePrintToolSummary();
-          } else {
-            console.log(`| ${event.type === "tool_start" ? `\uD83D\uDD27 ${event.toolName}...` : ""}`);
-          }
-          lastPrintedAt = Date.now();
-        }
-        if (event.type === "text" && event.content) {
-          process.stdout.write(event.content);
-          lastPrintedAt = Date.now();
-        }
-      }
-    });
-    clearInterval(heartbeatTimer);
-    process.stdout.write(`
-`);
-    output = result.output;
-    for (const [tool, count] of result.toolCounts) {
-      toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + count);
-    }
-    if (result.errors.length > 0) {
-      errors.push(...result.errors);
-    }
-    if (compactTools) {
-      maybePrintToolSummary(true);
-    }
-    return {
-      output,
-      toolCounts,
-      exitCode: result.exitCode,
-      errors
-    };
-  } catch (error) {
-    clearInterval(heartbeatTimer);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(errorMessage);
-    return {
-      output,
-      toolCounts,
-      exitCode: 1,
-      errors
-    };
-  }
-}
-async function runRalphLoop() {
-  const existingState = loadState();
-  const resuming = !!existingState?.active;
-  if (resuming) {
-    minIterations = existingState.minIterations;
-    maxIterations = existingState.maxIterations;
-    completionPromise = existingState.completionPromise;
-    abortPromise = existingState.abortPromise ?? "";
-    tasksMode = existingState.tasksMode;
-    taskPromise = existingState.taskPromise;
-    prompt = existingState.prompt;
-    promptTemplatePath = existingState.promptTemplate ?? "";
-    model = existingState.model;
-    if (existingState.supervisor) {
-      supervisorEnabled = existingState.supervisor.enabled;
-      supervisorModel = existingState.supervisor.model;
-      supervisorNoActionPromise = existingState.supervisor.noActionPromise;
-      supervisorSuggestionPromise = existingState.supervisor.suggestionPromise;
-      supervisorMemoryLimit = existingState.supervisor.memoryLimit;
-      supervisorPromptTemplatePath = existingState.supervisor.promptTemplate ?? "";
-    }
-    console.log(`\uD83D\uDD04 Resuming Ralph loop from ${(init_state(), __toCommonJS(exports_state)).getStateDir()}`);
-  }
-  const initialModel = model;
-  const effectiveSupervisorModel = supervisorModel || initialModel;
-  const supervisorConfig = {
-    enabled: supervisorEnabled,
-    model: effectiveSupervisorModel,
-    noActionPromise: supervisorNoActionPromise,
-    suggestionPromise: supervisorSuggestionPromise,
-    memoryLimit: supervisorMemoryLimit,
-    promptTemplate: supervisorPromptTemplatePath || undefined
-  };
-  console.log(`
-\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
-\u2551                    Ralph Wiggum Loop                            \u2551
-\u2551         Iterative AI Development with OpenCode                    \u2551
-\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
-`);
-  const state = resuming && existingState ? existingState : {
-    active: true,
-    iteration: 1,
-    minIterations,
-    maxIterations,
-    completionPromise,
-    abortPromise: abortPromise || undefined,
-    tasksMode,
-    taskPromise,
-    prompt,
-    promptTemplate: promptTemplatePath || undefined,
-    startedAt: new Date().toISOString(),
-    model: initialModel,
-    supervisor: supervisorConfig,
-    supervisorState: {
-      enabled: supervisorConfig.enabled,
-      pausedForDecision: false
-    }
-  };
-  if (resuming && existingState) {
-    state.supervisor = supervisorConfig;
-    state.supervisorState = existingState.supervisorState ?? {
-      enabled: supervisorConfig.enabled,
-      pausedForDecision: false
-    };
-  }
-  if (!resuming) {
-    saveState(state);
-  }
-  if (tasksMode && !existsSync8(tasksPath)) {
-    ensureTasksFile();
-    console.log(`\uD83D\uDCCB Created tasks file: ${tasksPath}`);
-  }
-  const history = resuming ? loadHistory() : {
-    iterations: [],
-    totalDurationMs: 0,
-    struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
-  };
-  if (!resuming) {
-    saveHistory(history);
-  }
-  const promptPreview = prompt.replace(/\s+/g, " ").substring(0, 80) + (prompt.length > 80 ? "..." : "");
-  if (promptSource) {
-    console.log(`Task: ${promptSource}`);
-    console.log(`Preview: ${promptPreview}`);
-  } else {
-    console.log(`Task: ${promptPreview}`);
-    console.log(`Completion promise: ${completionPromise}`);
-    if (tasksMode) {
-      console.log(`Tasks mode: ENABLED`);
-      console.log(`Task promise: ${taskPromise}`);
-    }
-    console.log(`Min iterations: ${minIterations}`);
-    console.log(`Max iterations: ${maxIterations > 0 ? maxIterations : "unlimited"}`);
-    if (initialModel)
-      console.log(`Model: ${initialModel}`);
-    if (supervisorConfig.enabled) {
-      console.log(`Supervisor: ENABLED${supervisorConfig.model ? ` / ${supervisorConfig.model}` : ""}`);
-    }
-    if (disablePlugins) {
-      console.log("OpenCode plugins: non-auth plugins disabled");
-    }
-    if (allowAllPermissions)
-      console.log("Permissions: auto-approve all tools");
-    console.log("");
-    console.log("Starting loop... (Ctrl+C to stop)");
-    console.log("\u2550".repeat(68));
-  }
+async function main() {
   let sdkClient = null;
   try {
     console.log("\uD83D\uDE80 Initializing OpenCode SDK...");
     sdkClient = await createSdkClient({
-      model: initialModel || undefined,
+      model: model || undefined,
       filterPlugins: disablePlugins,
       allowAllPermissions
     });
@@ -3471,349 +3818,44 @@ async function runRalphLoop() {
     console.error("SDK initialization failed. Please ensure OpenCode is properly installed and configured.");
     process.exit(1);
   }
-  let stopping = false;
-  process.on("SIGINT", () => {
-    if (stopping) {
-      console.log(`
-Force stopping...`);
-      process.exit(1);
-    }
-    stopping = true;
-    console.log(`
-Gracefully stopping Ralph loop...`);
+  try {
+    await runRalphLoop({
+      prompt,
+      promptTemplatePath,
+      model,
+      supervisorModel,
+      supervisorEnabled,
+      supervisorNoActionPromise,
+      supervisorSuggestionPromise,
+      supervisorMemoryLimit,
+      supervisorPromptTemplatePath,
+      minIterations,
+      maxIterations,
+      completionPromise,
+      abortPromise,
+      tasksMode,
+      taskPromise,
+      streamOutput,
+      verboseTools,
+      autoCommit,
+      disablePlugins,
+      allowAllPermissions,
+      sdkClient
+    });
+  } catch (error) {
+    console.error("Fatal error:", error);
+    process.exit(1);
+  } finally {
     if (sdkClient) {
       try {
-        console.log("\uD83E\uDDF9 Closing SDK server...");
         sdkClient.server.close();
       } catch {}
     }
-    clearState();
-    console.log("Loop cancelled.");
-    process.exit(0);
-  });
-  if (state.supervisorState?.pausedForDecision && state.supervisorState.pauseIteration) {
-    console.log(`\u23F8\uFE0F  Resuming in supervisor-decision wait mode (iteration ${state.supervisorState.pauseIteration})`);
-    const pausedIteration = state.supervisorState.pauseIteration;
-    const decisionResult = await waitForSupervisorDecisionIfNeeded(state, pausedIteration);
-    if (state.supervisorState.pauseReason === "completion_detected_with_pending_supervisor_suggestion") {
-      if (decisionResult.approvedAppliedCount > 0) {
-        console.log("\uD83D\uDD04 Supervisor-approved changes were applied while paused. Continuing loop.");
-        state.iteration++;
-        saveState(state);
-      } else {
-        console.log(`
-\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
-        console.log(`\u2551  \u2705 Completion promise confirmed after supervisor decisions`);
-        console.log(`\u2551  Task completed in ${state.iteration} iteration(s)`);
-        console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
-        console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
-        clearState();
-        clearHistory();
-        clearContext();
-        return;
-      }
-    }
-  }
-  while (true) {
-    if (maxIterations > 0 && state.iteration > maxIterations) {
-      console.log(`
-\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
-      console.log(`\u2551  Max iterations (${maxIterations}) reached. Loop stopped.`);
-      console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
-      console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
-      clearState();
-      break;
-    }
-    const iterInfo = maxIterations > 0 ? ` / ${maxIterations}` : "";
-    const minInfo = minIterations > 1 && state.iteration < minIterations ? ` (min: ${minIterations})` : "";
-    console.log(`
-\uD83D\uDD04 Iteration ${state.iteration}${iterInfo}${minInfo}`);
-    console.log("\u2500".repeat(68));
-    const contextAtStart = loadContext();
-    const snapshotBefore = await captureFileSnapshot();
-    let currentModel = state.model;
-    const fullPrompt = buildPrompt(state, promptTemplatePath);
-    const iterationStart = Date.now();
-    let result = "";
-    let stderr = "";
-    let toolCounts = new Map;
-    let exitCode = 0;
-    try {
-      console.log("\uD83D\uDE80 Using OpenCode SDK for execution...");
-      const sdkResult = await executeSdkIteration({
-        client: sdkClient,
-        prompt: fullPrompt,
-        model: currentModel,
-        streamOutput,
-        compactTools: !verboseTools
-      });
-      result = sdkResult.output;
-      toolCounts = sdkResult.toolCounts;
-      exitCode = sdkResult.exitCode;
-      stderr = sdkResult.errors.join(`
-`);
-      if (stderr && !streamOutput) {
-        console.error(stderr);
-      }
-      if (result && !streamOutput) {
-        console.log(result);
-      }
-      const combinedOutput = `${result}
-${stderr}`;
-      const completionDetected = checkCompletion(combinedOutput, completionPromise);
-      const abortDetected = abortPromise ? checkCompletion(combinedOutput, abortPromise) : false;
-      const taskCompletionDetected = tasksMode ? checkCompletion(combinedOutput, taskPromise) : false;
-      let shouldComplete = completionDetected;
-      const iterationDuration = Date.now() - iterationStart;
-      printIterationSummary({
-        iteration: state.iteration,
-        elapsedMs: iterationDuration,
-        toolCounts,
-        exitCode,
-        completionDetected,
-        model: currentModel
-      });
-      const snapshotAfter = await captureFileSnapshot();
-      const filesModified = getModifiedFilesSinceSnapshot(snapshotBefore, snapshotAfter);
-      const errors = extractErrors(combinedOutput);
-      const iterationRecord = {
-        iteration: state.iteration,
-        startedAt: new Date(iterationStart).toISOString(),
-        endedAt: new Date().toISOString(),
-        durationMs: iterationDuration,
-        model: currentModel,
-        toolsUsed: Object.fromEntries(toolCounts),
-        filesModified,
-        exitCode,
-        completionDetected,
-        errors
-      };
-      history.iterations.push(iterationRecord);
-      history.totalDurationMs += iterationDuration;
-      if (filesModified.length === 0) {
-        history.struggleIndicators.noProgressIterations++;
-      } else {
-        history.struggleIndicators.noProgressIterations = 0;
-      }
-      if (iterationDuration < 30000) {
-        history.struggleIndicators.shortIterations++;
-      } else {
-        history.struggleIndicators.shortIterations = 0;
-      }
-      if (errors.length === 0) {
-        history.struggleIndicators.repeatedErrors = {};
-      } else {
-        for (const error of errors) {
-          const key = error.substring(0, 100);
-          history.struggleIndicators.repeatedErrors[key] = (history.struggleIndicators.repeatedErrors[key] || 0) + 1;
-        }
-      }
-      saveHistory(history);
-      const struggle = history.struggleIndicators;
-      if (state.iteration > 2 && (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3)) {
-        console.log(`
-\u26A0\uFE0F  Potential struggle detected:`);
-        if (struggle.noProgressIterations >= 3) {
-          console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
-        }
-        if (struggle.shortIterations >= 3) {
-          console.log(`   - ${struggle.shortIterations} very short iterations`);
-        }
-        console.log(`   \uD83D\uDCA1 Tip: Use 'ralph --add-context "hint"' in another terminal to guide the agent`);
-      }
-      if (detectPlaceholderPluginError(combinedOutput) || detectSdkPlaceholderPluginError(combinedOutput)) {
-        console.error(`
-\u274C OpenCode tried to load legacy 'ralph-wiggum' plugin. This package is CLI-only.`);
-        console.error("Remove 'ralph-wiggum' from your opencode.json plugin list, or re-run with --no-plugins.");
-        clearState();
-        process.exit(1);
-      }
-      if (detectSdkModelNotFoundError(combinedOutput)) {
-        console.error(`
-\u274C Model configuration error detected.`);
-        console.error("   The agent could not find a valid model to use.");
-        console.error(`
-   To fix this:`);
-        console.error("   1. Set a default model in ~/.config/opencode/opencode.json:");
-        console.error('      { "model": "your-provider/model-name" }');
-        console.error('   2. Or use --model flag: ralph "task" --model provider/model');
-        console.error(`
-   See OpenCode documentation for available models.`);
-        clearState();
-        process.exit(1);
-      }
-      if (exitCode !== 0) {
-        console.warn(`
-\u26A0\uFE0F  OpenCode exited with code ${exitCode}. Continuing to next iteration.`);
-      }
-      const supervisorCfg = state.supervisor;
-      if (supervisorCfg?.enabled) {
-        if (!sdkClient) {
-          console.warn("\u26A0\uFE0F  Supervisor mode requires SDK client. Skipping supervisor run.");
-        } else {
-          console.log(`
-\uD83D\uDD75\uFE0F  Running supervisor${supervisorCfg.model ? ` / ${supervisorCfg.model}` : ""}...`);
-          const supervisorResult = await runSupervisorOnce(state, supervisorCfg, history, combinedOutput, sdkClient);
-          const lastRunAt = new Date().toISOString();
-          state.supervisorState = {
-            ...state.supervisorState ?? { enabled: true, pausedForDecision: false },
-            enabled: true,
-            lastRunAt,
-            lastRunIteration: state.iteration
-          };
-          if (!supervisorResult.ok) {
-            console.warn(`\u26A0\uFE0F  Supervisor failed: ${supervisorResult.error}`);
-            appendSupervisorMemory({
-              iteration: state.iteration,
-              summary: "Supervisor run failed",
-              decision: supervisorResult.error ?? "unknown error",
-              timestamp: lastRunAt
-            }, supervisorCfg.memoryLimit);
-          } else if (supervisorResult.noAction) {
-            console.log("\u2705 Supervisor: no action needed");
-            appendSupervisorMemory({
-              iteration: state.iteration,
-              summary: "No additional actions suggested",
-              decision: "no_action",
-              timestamp: lastRunAt
-            }, supervisorCfg.memoryLimit);
-          } else if (supervisorResult.suggestion) {
-            const suggestion = {
-              id: buildSupervisorSuggestionId(state.iteration),
-              iteration: state.iteration,
-              kind: supervisorResult.suggestion.kind,
-              title: supervisorResult.suggestion.title,
-              details: supervisorResult.suggestion.details,
-              proposedChanges: supervisorResult.suggestion.proposedChanges,
-              status: "pending",
-              createdAt: lastRunAt
-            };
-            const suggestionStore = loadSupervisorSuggestions();
-            if (suggestionStore.parseError) {
-              console.warn(`\u26A0\uFE0F  Could not save suggestion: ${suggestionStore.parseError}`);
-            } else {
-              suggestionStore.suggestions.push(suggestion);
-              saveSupervisorSuggestions(suggestionStore);
-              console.log(`\uD83D\uDCCC Supervisor suggestion created: ${suggestion.id}`);
-              console.log(`   Approve: ralph --approve-suggestion ${suggestion.id}`);
-              console.log(`   Reject:  ralph --reject-suggestion ${suggestion.id}`);
-              appendSupervisorMemory({
-                iteration: state.iteration,
-                summary: `${suggestion.kind}: ${suggestion.title}`,
-                decision: "pending_user_decision",
-                timestamp: lastRunAt
-              }, supervisorCfg.memoryLimit);
-              if (completionDetected) {
-                state.supervisorState = {
-                  ...state.supervisorState ?? { enabled: true, pausedForDecision: false },
-                  enabled: true,
-                  pausedForDecision: true,
-                  pauseIteration: state.iteration,
-                  pauseReason: "completion_detected_with_pending_supervisor_suggestion",
-                  lastRunAt,
-                  lastRunIteration: state.iteration
-                };
-                saveState(state);
-                const decisionResult = await waitForSupervisorDecisionIfNeeded(state, state.iteration);
-                if (decisionResult.approvedAppliedCount > 0) {
-                  shouldComplete = false;
-                  console.log("\uD83D\uDD04 Supervisor-approved changes detected. Continuing loop instead of exiting.");
-                } else {
-                  console.log("\u2705 All supervisor suggestions resolved without approved changes.");
-                }
-              }
-            }
-          }
-        }
-      }
-      if (abortDetected) {
-        console.log(`
-\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
-        console.log(`\u2551  \u26D4 Abort signal detected: <promise>${abortPromise}</promise>`);
-        console.log(`\u2551  Loop aborted after ${state.iteration} iteration(s)`);
-        console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
-        console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
-        clearState();
-        clearHistory();
-        clearContext();
-        process.exit(1);
-      }
-      if (taskCompletionDetected && !completionDetected) {
-        console.log(`
-\uD83D\uDD04 Task completion detected: <promise>${taskPromise}</promise>`);
-        console.log(`   Moving to next task in iteration ${state.iteration + 1}...`);
-      }
-      if (shouldComplete) {
-        if (state.iteration < minIterations) {
-          console.log(`
-\u23F3 Completion promise detected, but minimum iterations (${minIterations}) not yet reached.`);
-          console.log(`   Continuing to iteration ${state.iteration + 1}...`);
-        } else {
-          console.log(`
-\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557`);
-          console.log(`\u2551  \u2705 Completion promise detected: <promise>${completionPromise}</promise>`);
-          console.log(`\u2551  Task completed in ${state.iteration} iteration(s)`);
-          console.log(`\u2551  Total time: ${formatDurationLong(history.totalDurationMs)}`);
-          console.log(`\u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D`);
-          clearState();
-          clearHistory();
-          clearContext();
-          break;
-        }
-      }
-      if (contextAtStart) {
-        console.log(`\uD83D\uDCDD Context was consumed this iteration`);
-        clearContext();
-      }
-      if (autoCommit) {
-        try {
-          const status = await $2`git status --porcelain`.text();
-          if (status.trim()) {
-            await $2`git add -A`;
-            await $2`git commit -m "Ralph iteration ${state.iteration}: work in progress"`.quiet();
-            console.log(`\uD83D\uDCDD Auto-committed changes`);
-          }
-        } catch {}
-      }
-      state.iteration++;
-      saveState(state);
-      await new Promise((r) => setTimeout(r, 1000));
-    } catch (error) {
-      console.error(`
-\u274C Error in iteration ${state.iteration}:`, error);
-      console.log("Continuing to next iteration...");
-      const iterationDuration = Date.now() - iterationStart;
-      const errorRecord = {
-        iteration: state.iteration,
-        startedAt: new Date(iterationStart).toISOString(),
-        endedAt: new Date().toISOString(),
-        durationMs: iterationDuration,
-        model: currentModel,
-        toolsUsed: {},
-        filesModified: [],
-        exitCode: -1,
-        completionDetected: false,
-        errors: [String(error).substring(0, 200)]
-      };
-      history.iterations.push(errorRecord);
-      history.totalDurationMs += iterationDuration;
-      saveHistory(history);
-      state.iteration++;
-      saveState(state);
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-  }
-  if (sdkClient) {
-    try {
-      console.log("\uD83E\uDDF9 Closing SDK server...");
-      sdkClient.server.close();
-    } catch {}
   }
 }
 if (import.meta.main) {
-  runRalphLoop().catch((error) => {
+  main().catch((error) => {
     console.error("Fatal error:", error);
-    clearState();
     process.exit(1);
   });
 }

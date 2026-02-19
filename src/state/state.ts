@@ -11,6 +11,8 @@ import {
   getHistoryFilePath,
 } from "../config/config";
 
+export { getStateDir };
+
 export interface IterationHistory {
   iteration: number;
   startedAt: string;
