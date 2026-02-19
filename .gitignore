@@ -73,6 +73,8 @@ $RECYCLE.BIN/
 *.lnk
 
 context/
+!src/context/
+!src/context/**
 node_modules/
 .ralph/
 

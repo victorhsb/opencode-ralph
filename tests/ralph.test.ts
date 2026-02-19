@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-const RALPH_PATH = "/Users/torugo/go/src/github.com/victorhsb/open-ralph-wiggum/ralph.ts";
+const RALPH_PATH = join(import.meta.dir, "..", "ralph.ts");
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "ralph-test-"));
@@ -21,11 +21,6 @@ function runRalphSync(cwd: string, args: string[], env: Record<string, string> =
     stdout: new TextDecoder().decode(proc.stdout),
     stderr: new TextDecoder().decode(proc.stderr),
   };
-}
-
-function writeMockAgent(path: string, script: string): void {
-  writeFileSync(path, script);
-  chmodSync(path, 0o755);
 }
 
 describe("supervisor cli", () => {
@@ -113,15 +108,10 @@ describe("supervisor cli", () => {
 
   test("supervisor disabled does not create supervisor files", () => {
     const cwd = makeTempDir();
-    const agentPath = join(cwd, "done-agent.sh");
-    writeMockAgent(
-      agentPath,
-      `#!/bin/sh
-echo "<promise>COMPLETE</promise>"
-`,
-    );
 
     const res = runRalphSync(cwd, ["Simple task", "--max-iterations", "1", "--no-commit", "--no-stream"], {
+      RALPH_FAKE_SDK: "1",
+      RALPH_FAKE_OUTPUT: "<promise>COMPLETE</promise>",
     });
 
     expect(res.exitCode).toBe(0);

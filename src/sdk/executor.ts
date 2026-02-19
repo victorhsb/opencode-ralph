@@ -162,12 +162,21 @@ export async function executePrompt(
     const result = promptResponse.data;
 
     // Wait for events to complete (with timeout)
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const abortHandler = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      timeoutId = null;
+    };
+
     const timeoutPromise = new Promise<void>((_, reject) => {
-      const timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(() => {
+        timeoutId = null;
         reject(new Error("Event stream timeout"));
       }, 30000);
       signal?.addEventListener("abort", () => {
-        clearTimeout(timeoutId);
+        abortHandler();
         reject(new Error("Aborted"));
       });
     });
@@ -179,6 +188,8 @@ export async function executePrompt(
         throw error;
       }
       // Timeout is not fatal - continue with what we have
+    } finally {
+      abortHandler();
     }
 
     // Extract final output from result

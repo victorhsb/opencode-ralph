@@ -406,47 +406,45 @@ __export(exports_context, {
   clearContext: () => clearContext,
   appendContext: () => appendContext
 });
-import { existsSync as existsSync4, readFileSync as readFileSync4, writeFileSync as writeFileSync3, mkdirSync as mkdirSync3 } from "fs";
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync3 } from "fs";
 function getContextPath() {
   return getContextFilePath();
 }
 function loadContext() {
-  const path = getContextFilePath();
+  const path = getContextPath();
   if (!existsSync4(path)) {
     return null;
   }
   try {
     const content = readFileSync4(path, "utf-8").trim();
-    return content || null;
+    return content.length > 0 ? content : null;
   } catch {
     return null;
   }
 }
+function appendContext(text) {
+  const trimmedText = text.trim();
+  if (!trimmedText) {
+    return;
+  }
+  const stateDir = getStateDir();
+  if (!existsSync4(stateDir)) {
+    mkdirSync3(stateDir, { recursive: true });
+  }
+  const path = getContextPath();
+  try {
+    const current = existsSync4(path) ? readFileSync4(path, "utf-8").trim() : "";
+    const nextContent = current ? `${current}
+${trimmedText}` : trimmedText;
+    writeFileSync3(path, nextContent);
+  } catch {}
+}
 function clearContext() {
-  const path = getContextFilePath();
+  const path = getContextPath();
   if (existsSync4(path)) {
     try {
-      __require("fs").unlinkSync(path);
+      unlinkSync(path);
     } catch {}
-  }
-}
-function appendContext(contextText) {
-  const path = getContextFilePath();
-  const stateDirPath = getStateDir();
-  if (!existsSync4(stateDirPath)) {
-    mkdirSync3(stateDirPath, { recursive: true });
-  }
-  const timestamp = new Date().toISOString();
-  const newEntry = `
-## Context added at ${timestamp}
-${contextText}
-`;
-  if (existsSync4(path)) {
-    const existing = readFileSync4(path, "utf-8");
-    writeFileSync3(path, existing + newEntry);
-  } else {
-    writeFileSync3(path, `# Ralph Loop Context
-${newEntry}`);
   }
 }
 var init_context = __esm(() => {
@@ -641,12 +639,20 @@ async function executePrompt(options) {
       };
     }
     const result = promptResponse.data;
+    let timeoutId = null;
+    const abortHandler = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      timeoutId = null;
+    };
     const timeoutPromise = new Promise((_, reject) => {
-      const timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(() => {
+        timeoutId = null;
         reject(new Error("Event stream timeout"));
       }, 30000);
       signal?.addEventListener("abort", () => {
-        clearTimeout(timeoutId);
+        abortHandler();
         reject(new Error("Aborted"));
       });
     });
@@ -656,6 +662,8 @@ async function executePrompt(options) {
       if (String(error).includes("Aborted")) {
         throw error;
       }
+    } finally {
+      abortHandler();
     }
     const finalOutput = extractOutputFromMessage(result);
     return {
@@ -2430,6 +2438,37 @@ async function findAvailablePort(hostname, preferredPort) {
   }
 }
 async function createSdkClient(options) {
+  if (process.env.RALPH_FAKE_SDK === "1") {
+    const output = process.env.RALPH_FAKE_OUTPUT ?? "<promise>COMPLETE</promise>";
+    const client3 = {
+      session: {
+        create: async () => ({
+          data: { id: "fake-session" },
+          error: undefined
+        }),
+        prompt: async () => ({
+          data: {
+            parts: [{ type: "text", text: output }]
+          },
+          error: undefined
+        })
+      },
+      event: {
+        subscribe: async () => ({
+          stream: async function* () {
+            yield { type: "session.idle" };
+          }()
+        })
+      }
+    };
+    return {
+      client: client3,
+      server: {
+        url: "http://127.0.0.1:0",
+        close: () => {}
+      }
+    };
+  }
   const hostname = options.hostname ?? "127.0.0.1";
   const requestedPort = options.port ?? 4096;
   const port = await findAvailablePort(hostname, requestedPort);
@@ -3700,7 +3739,7 @@ function handleRemoveTaskCommand(args) {
 }
 
 // ralph.ts
-var __dirname = "/Users/torugo/go/src/github.com/victorhsb/opencode-ralph";
+var __dirname = "/home/torugo/go/src/github.com/victorhsb/opencode-ralph";
 var VERSION = process.env.npm_package_version || (existsSync10(join3(__dirname, "package.json")) ? JSON.parse(readFileSync9(join3(__dirname, "package.json"), "utf-8")).version : "2.0.1");
 var args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {

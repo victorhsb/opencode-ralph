@@ -120,6 +120,39 @@ async function findAvailablePort(hostname: string, preferredPort: number): Promi
  * - filterPlugins: SDK config.plugin (filter to auth-only)
  */
 export async function createSdkClient(options: SdkClientOptions): Promise<SdkClient> {
+  if (process.env.RALPH_FAKE_SDK === "1") {
+    const output = process.env.RALPH_FAKE_OUTPUT ?? "<promise>COMPLETE</promise>";
+    const client = {
+      session: {
+        create: async () => ({
+          data: { id: "fake-session" },
+          error: undefined,
+        }),
+        prompt: async () => ({
+          data: {
+            parts: [{ type: "text", text: output }],
+          },
+          error: undefined,
+        }),
+      },
+      event: {
+        subscribe: async () => ({
+          stream: (async function* () {
+            yield { type: "session.idle" };
+          })(),
+        }),
+      },
+    } as unknown as Awaited<ReturnType<typeof createOpencode>>["client"];
+
+    return {
+      client,
+      server: {
+        url: "http://127.0.0.1:0",
+        close: () => {},
+      },
+    };
+  }
+
   const hostname = options.hostname ?? "127.0.0.1";
   const requestedPort = options.port ?? 4096;
   const port = await findAvailablePort(hostname, requestedPort);
