@@ -10,17 +10,18 @@
 <p align="center">
   <em>Works exclusively with <b>OpenCode</b> using the official SDK</em><br>
   <em>Based on the <a href="https://ghuntley.com/ralph/">Ralph Wiggum technique</a> by Geoffrey Huntley</em>
+  <em>Forked from <a href="https://github.com/th0rgal/ralph-wiggum.git">Ralph Wiggum technique</a> by Geoffrey Huntley</em>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Th0rgal/ralph-wiggum/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <a href="https://github.com/Th0rgal/ralph-wiggum"><img src="https://img.shields.io/badge/built%20with-Bun%20%2B%20TypeScript-f472b6.svg" alt="Built with Bun + TypeScript"></a>
-  <a href="https://github.com/Th0rgal/ralph-wiggum/releases"><img src="https://img.shields.io/github/v/release/Th0rgal/ralph-wiggum?include_prereleases" alt="Release"></a>
+  <a href="https://github.com/victorhsb/opencode-ralph/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href="https://github.com/victorhsb/opencode-ralph"><img src="https://img.shields.io/badge/built%20with-Bun%20%2B%20TypeScript-f472b6.svg" alt="Built with Bun + TypeScript"></a>
+  <a href="https://github.com/victorhsb/opencode-ralph/releases"><img src="https://img.shields.io/github/v/release/victorhsb/opencode-ralph?include_prereleases" alt="Release"></a>
 </p>
 
 <p align="center">
   <a href="#supported-platform">Supported Platform</a> •
-  <a href="#what-is-open-ralph-wiggum">What is Ralph?</a> •
+  <a href="#what-is-opencode-ralph">What is Ralph?</a> •
   <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#commands">Commands</a>
@@ -94,26 +95,26 @@ No external CLI tools required - everything is bundled.
 ### npm (recommended)
 
 ```bash
-npm install -g @th0rgal/ralph-wiggum
+npm install -g @victorhsb/opencode-ralph
 ```
 
 ### Bun
 
 ```bash
-bun add -g @th0rgal/ralph-wiggum
+bun add -g @victorhsb/opencode-ralph
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/Th0rgal/open-ralph-wiggum
-cd open-ralph-wiggum
+git clone https://github.com/victorhsb/opencode-ralph
+cd opencode-ralph
 ./install.sh
 ```
 
 ```powershell
-git clone https://github.com/Th0rgal/open-ralph-wiggum
-cd open-ralph-wiggum
+git clone https://github.com/victorhsb/opencode-ralph
+cd opencode-ralph
 .\install.ps1
 ```
 
@@ -142,6 +143,39 @@ ralph "Build API" --supervisor --max-iterations 15
 ralph "Build a full-stack web application with user auth and database" \
   --tasks --max-iterations 50
 ```
+
+## GitHub Bot Integration
+
+Open Ralph Wiggum includes a GitHub Actions workflow that enables AI-powered code review on issues and pull requests.
+
+### Setup
+
+1. The workflow is automatically available at `.github/workflows/opencode.yml`
+2. No additional configuration needed—works out of the box
+
+### Usage
+
+Comment on any issue or pull request with:
+
+```
+/oc <your request>
+```
+
+Or the full command:
+
+```
+/opencode <your request>
+```
+
+**Examples:**
+
+```
+/oc Explain this PR's changes
+/opencoReview the test coverage in src/auth/
+/oc Suggest improvements to the error handling
+```
+
+The bot will respond with AI-generated analysis using the Zhipu AI model.
 
 ## Migration from 1.x to 2.0.0
 
@@ -408,7 +442,7 @@ Context is automatically consumed after one iteration.
 
 ### Plugin errors
 
-This package is **CLI-only**. If OpenCode tries to load a `ralph-wiggum` or `open-ralph-wiggum` plugin,
+This package is **CLI-only**. If OpenCode tries to load a `ralph-wiggum` or `opencode-ralph` plugin,
 remove it from your OpenCode `plugin` list (opencode.json), or run:
 
 ```bash
@@ -655,36 +689,64 @@ Output <promise>COMPLETE</promise> when all features pass.
 
 ```
 ralph-wiggum/
-├── bin/ralph.js                  # CLI entrypoint (npm wrapper)
-├── ralph.ts                      # Main loop implementation
+├── ralph.ts                      # Top-level CLI entrypoint
 ├── src/
-│   └── sdk/                      # SDK integration
-│       ├── client.ts             # SDK client initialization
-│       ├── executor.ts           # Prompt execution
-│       └── output.ts             # Response formatting
+│   ├── cli/                      # CLI argument parsing and commands
+│   │   ├── args.ts               # Argument parsing
+│   │   └── commands.ts           # Command handlers
+│   ├── config/                   # Configuration and constants
+│   │   └── config.ts             # Paths, defaults, constants
+│   ├── context/                  # Mid-loop context management
+│   │   └── context.ts            # Add/clear context helpers
+│   ├── fs-tracker/               # File system tracking
+│   │   └── fs-tracker.ts         # Change detection utilities
+│   ├── io/                       # File I/O utilities
+│   │   └── files.ts              # File operations
+│   ├── loop/                     # Main iteration loop
+│   │   ├── loop.ts               # Loop orchestration
+│   │   └── iteration.ts          # Per-iteration execution
+│   ├── prompts/                  # Prompt building
+│   │   └── prompts.ts            # Template processing
+│   ├── sdk/                      # OpenCode SDK integration
+│   │   ├── client.ts             # SDK client initialization
+│   │   ├── executor.ts           # Prompt execution
+│   │   └── output.ts             # Response formatting
+│   ├── state/                    # State management
+│   │   └── state.ts              # Loop state persistence
+│   ├── supervisor/               # Supervisor mode
+│   │   └── supervisor.ts         # Suggestion pipeline
+│   ├── tasks/                    # Tasks mode
+│   │   └── tasks.ts              # Task file parsing
+│   └── utils/                    # General utilities
+│       └── utils.ts              # Helper functions
+├── bin/ralph.js                  # Compiled CLI entrypoint
 ├── package.json                  # Package config
+├── AGENTS.md                     # Agent operational guide
+├── ARCHITECTURE.md               # Technical architecture docs
 ├── install.sh / install.ps1     # Installation scripts
 └── uninstall.sh / uninstall.ps1 # Uninstallation scripts
 ```
 
 ### State Files (in .ralph/)
 
-During operation, Ralph stores state in `.ralph/`:
-- `ralph-loop.state.json` - Active loop state
-- `ralph-history.json` - Iteration history and metrics
-- `ralph-context.md` - Pending context for next iteration
+During operation, Ralph stores state in `.ralph/` (automatically created and gitignored):
+- `ralph-loop.state.json` - Active loop state (running/paused, iteration count)
+- `ralph-history.json` - Iteration history with metrics (duration, tools used)
+- `ralph-context.md` - Pending context/hints for next iteration (via `--add-context`)
 - `ralph-tasks.md` - Task list for Tasks Mode (created when `--tasks` is used)
 - `supervisor-suggestions.json` - Supervisor suggestions and approval status
 - `supervisor-memory.md` - Rolling supervisor memory across iterations
 
+**Note:** The `.ralph/` directory is runtime state and should not be committed to git.
+
 ## Uninstall
 
 ```bash
-npm uninstall -g @th0rgal/ralph-wiggum
+npm uninstall -g @victorhsb/opencode-ralph
 ```
 
 ```powershell
-npm uninstall -g @th0rgal/ralph-wiggum
+npm uninstall -g @victorhsb/opencode-ralph
 ```
 
 ## Learn More
