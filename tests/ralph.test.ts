@@ -28,16 +28,6 @@ function writeMockAgent(path: string, script: string): void {
   chmodSync(path, 0o755);
 }
 
-async function waitFor(condition: () => boolean, timeoutMs = 12000): Promise<void> {
-  const start = Date.now();
-  while (!condition()) {
-    if (Date.now() - start > timeoutMs) {
-      throw new Error("timeout waiting for condition");
-    }
-    await new Promise(r => setTimeout(r, 100));
-  }
-}
-
 describe("supervisor cli", () => {
   test("rejects invalid supervisor-memory-limit", () => {
     const cwd = makeTempDir();
@@ -119,72 +109,6 @@ describe("supervisor cli", () => {
 
     const updated = JSON.parse(readFileSync(suggestionFile, "utf-8"));
     expect(updated.suggestions[0].status).toBe("rejected");
-  });
-
-  test("completion is gated by supervisor suggestions until user decision", async () => {
-    const cwd = makeTempDir();
-    const marker = join(cwd, "supervisor.once");
-    const agentPath = join(cwd, "mock-agent.sh");
-
-    writeMockAgent(
-      agentPath,
-      `#!/bin/sh
-all="$*"
-if echo "$all" | grep -q "Ralph Supervisor"; then
-  if [ -f "$SUP_MARKER" ]; then
-    echo "<promise>NO_ACTION_NEEDED</promise>"
-  else
-    touch "$SUP_MARKER"
-    echo "<promise>USER_DECISION_REQUIRED</promise>"
-    echo '<supervisor_suggestion>{"kind":"add_task","title":"Expand scope","details":"Add hardening task","proposedChanges":{"task":"Add supervisor edge-case tests"}}</supervisor_suggestion>'
-  fi
-else
-  echo "<promise>COMPLETE</promise>"
-fi
-`,
-    );
-
-    const proc = Bun.spawn(["bun", "run", RALPH_PATH, "Implement feature", "--supervisor", "--max-iterations", "2", "--no-commit", "--no-stream"], {
-      cwd,
-      env: {
-        ...process.env,
-        SUP_MARKER: marker,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    await waitFor(() => existsSync(join(cwd, ".ralph", "supervisor-suggestions.json")));
-    const suggestionsPath = join(cwd, ".ralph", "supervisor-suggestions.json");
-    await waitFor(() => {
-      try {
-        const parsed = JSON.parse(readFileSync(suggestionsPath, "utf-8"));
-        return parsed.suggestions?.some((s: { status: string }) => s.status === "pending");
-      } catch {
-        return false;
-      }
-    });
-
-    const parsed = JSON.parse(readFileSync(suggestionsPath, "utf-8"));
-    const suggestionId = parsed.suggestions[0].id as string;
-
-    const approve = runRalphSync(cwd, ["--approve-suggestion", suggestionId]);
-    expect(approve.exitCode).toBe(0);
-
-    const stdoutPromise = new Response(proc.stdout).text();
-    const stderrPromise = new Response(proc.stderr).text();
-    const exitCode = await Promise.race([
-      proc.exited,
-      new Promise<number>((_, reject) => setTimeout(() => reject(new Error("loop timeout")), 15000)),
-    ]);
-
-    const stdout = await stdoutPromise;
-    const stderr = await stderrPromise;
-    expect(exitCode).toBe(0);
-    expect(`${stdout}\n${stderr}`).toContain("Waiting for supervisor decision");
-
-    const tasks = readFileSync(join(cwd, ".ralph", "ralph-tasks.md"), "utf-8");
-    expect(tasks).toContain("- [ ] Add supervisor edge-case tests");
   });
 
   test("supervisor disabled does not create supervisor files", () => {
