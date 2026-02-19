@@ -3850,7 +3850,7 @@ function handleRemoveTaskCommand(args) {
 }
 
 // ralph.ts
-var __dirname = "/home/torugo/go/src/github.com/victorhsb/opencode-ralph";
+var __dirname = "/Users/torugo/go/src/github.com/victorhsb/opencode-ralph";
 var VERSION = process.env.npm_package_version || (existsSync10(join3(__dirname, "package.json")) ? JSON.parse(readFileSync9(join3(__dirname, "package.json"), "utf-8")).version : "2.0.1");
 var args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
