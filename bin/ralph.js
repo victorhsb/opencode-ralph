@@ -716,21 +716,29 @@ function parseSdkEvent(event) {
   if (eventType === "message.part.updated") {
     const part = props.part || {};
     const partType = typeof part.type === "string" ? part.type : "";
-    if (partType === "tool_use") {
-      const toolName = typeof part.name === "string" ? part.name : "unknown";
-      return {
-        type: "tool_start",
-        toolName,
-        timestamp
-      };
-    }
-    if (partType === "tool_result") {
-      const toolName = typeof part.name === "string" ? part.name : "unknown";
-      return {
-        type: "tool_end",
-        toolName,
-        timestamp
-      };
+    if (partType === "tool") {
+      const toolName = typeof part.tool === "string" ? part.tool : "unknown";
+      const state = part.state || {};
+      const status = typeof state.status === "string" ? state.status : "";
+      if (status === "running") {
+        return {
+          type: "tool_start",
+          toolName,
+          timestamp
+        };
+      }
+      if (status === "completed") {
+        return {
+          type: "tool_end",
+          toolName,
+          result: {
+            input: typeof state.input === "object" && state.input !== null ? state.input : undefined,
+            output: typeof state.output === "string" ? state.output : undefined,
+            title: typeof state.title === "string" ? state.title : undefined
+          },
+          timestamp
+        };
+      }
     }
     if (partType === "text") {
       const text = typeof part.text === "string" ? part.text : "";
@@ -785,8 +793,11 @@ function extractOutputFromMessage(message) {
         if (partObj.type === "thinking" && typeof partObj.thinking === "string") {
           output.push(`[Thinking: ${partObj.thinking}]`);
         }
-        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
-          output.push(`[Tool ${partObj.name} executed]`);
+        if (partObj.type === "tool" && typeof partObj.tool === "string") {
+          const state = partObj.state || {};
+          if (state.status === "completed") {
+            output.push(`[Tool ${partObj.tool} executed]`);
+          }
         }
       }
     }
@@ -801,8 +812,11 @@ function extractOutputFromMessage(message) {
         if (partObj.type === "thinking" && typeof partObj.thinking === "string") {
           output.push(`[Thinking: ${partObj.thinking}]`);
         }
-        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
-          output.push(`[Tool ${partObj.name} executed]`);
+        if (partObj.type === "tool" && typeof partObj.tool === "string") {
+          const state = partObj.state || {};
+          if (state.status === "completed") {
+            output.push(`[Tool ${partObj.tool} executed]`);
+          }
         }
       }
     }
@@ -2382,6 +2396,52 @@ async function createOpencode(options) {
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { createServer } from "net";
+function parseFakeEventsFromEnv() {
+  const raw = process.env.RALPH_FAKE_EVENTS_JSON;
+  if (!raw?.trim()) {
+    return [{ type: "session.idle" }];
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {}
+  return [{ type: "session.idle" }];
+}
+function parseFakePromptPartsFromEnv(defaultOutput) {
+  const raw = process.env.RALPH_FAKE_OUTPUT_PARTS_JSON;
+  if (!raw?.trim()) {
+    return [{ type: "text", text: defaultOutput }];
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const parts = [];
+      for (const part of parsed) {
+        if (part && typeof part === "object" && part.type === "text" && typeof part.text === "string") {
+          parts.push({
+            type: "text",
+            text: part.text
+          });
+        }
+      }
+      if (parts.length > 0) {
+        return parts;
+      }
+    }
+  } catch {}
+  return [{ type: "text", text: defaultOutput }];
+}
+function hasTerminalFakeEvent(events) {
+  return events.some((event) => {
+    if (!event || typeof event !== "object") {
+      return false;
+    }
+    const type = event.type;
+    return type === "session.idle" || type === "session.error";
+  });
+}
 function loadPluginsFromConfig(configPath) {
   if (!existsSync(configPath)) {
     return [];
@@ -2440,6 +2500,8 @@ async function findAvailablePort(hostname, preferredPort) {
 async function createSdkClient(options) {
   if (process.env.RALPH_FAKE_SDK === "1") {
     const output = process.env.RALPH_FAKE_OUTPUT ?? "<promise>COMPLETE</promise>";
+    const fakeEvents = parseFakeEventsFromEnv();
+    const fakeParts = parseFakePromptPartsFromEnv(output);
     const client3 = {
       session: {
         create: async () => ({
@@ -2448,7 +2510,7 @@ async function createSdkClient(options) {
         }),
         prompt: async () => ({
           data: {
-            parts: [{ type: "text", text: output }]
+            parts: fakeParts
           },
           error: undefined
         })
@@ -2456,7 +2518,12 @@ async function createSdkClient(options) {
       event: {
         subscribe: async () => ({
           stream: async function* () {
-            yield { type: "session.idle" };
+            for (const event of fakeEvents) {
+              yield event;
+            }
+            if (!hasTerminalFakeEvent(fakeEvents)) {
+              yield { type: "session.idle" };
+            }
           }()
         })
       }
@@ -2661,10 +2728,39 @@ function getModifiedFilesSinceSnapshot(before, after) {
   }
   return changedFiles;
 }
+// src/sdk/output.ts
+function formatToolResult(toolName, result) {
+  const lines = [];
+  const input = result.input || {};
+  const filePath = typeof input.filePath === "string" ? input.filePath : typeof input.path === "string" ? input.path : undefined;
+  if (filePath) {
+    lines.push(`  \u2192 ${filePath}`);
+  }
+  if (toolName === "edit" && result.output) {
+    const additions = (result.output.match(/^[+][^+]/gm) || []).length;
+    const deletions = (result.output.match(/^[-][^-]/gm) || []).length;
+    if (additions > 0 || deletions > 0) {
+      lines.push(`  \u2192 ${additions > 0 ? `+${additions}` : "0"}${deletions > 0 ? `, -${deletions}` : ""}`);
+    }
+  }
+  if (result.output && toolName !== "edit") {
+    const outputLines = result.output.split(`
+`);
+    const previewLines = outputLines.slice(0, 10);
+    for (const line of previewLines) {
+      lines.push(`  \u2192 ${line}`);
+    }
+    if (outputLines.length > 10) {
+      lines.push(`  \u2192 ... (${outputLines.length - 10} more lines)`);
+    }
+  }
+  return lines.join(`
+`);
+}
 
 // src/loop/iteration.ts
 async function executeSdkIteration(options) {
-  const { client: client3, prompt, model, streamOutput, compactTools } = options;
+  const { client: client3, prompt, model, streamOutput, compactTools, silent } = options;
   const toolCounts = new Map;
   const errors = [];
   let output = "";
@@ -2699,18 +2795,24 @@ async function executeSdkIteration(options) {
       prompt,
       model,
       onEvent: (event) => {
-        if (!streamOutput)
-          return;
         if (event.type === "tool_start" && event.toolName) {
           toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
-          if (compactTools) {
-            maybePrintToolSummary();
-          } else {
-            console.log(`| ${event.type === "tool_start" ? `\uD83D\uDD27 ${event.toolName}...` : ""}`);
+          if (!silent && streamOutput) {
+            console.log(`\uD83D\uDD27 ${event.toolName}...`);
+            lastPrintedAt = Date.now();
           }
-          lastPrintedAt = Date.now();
         }
-        if (event.type === "text" && event.content) {
+        if (event.type === "tool_end" && event.toolName && !silent) {
+          if (streamOutput && event.result) {
+            const formattedResult = formatToolResult(event.toolName, event.result);
+            if (formattedResult) {
+              console.log(formattedResult);
+            }
+            console.log(`\u2713 ${event.toolName}`);
+            lastPrintedAt = Date.now();
+          }
+        }
+        if (streamOutput && event.type === "text" && event.content) {
           process.stdout.write(event.content);
           lastPrintedAt = Date.now();
         }
@@ -2720,8 +2822,10 @@ async function executeSdkIteration(options) {
     process.stdout.write(`
 `);
     output = result.output;
-    for (const [tool, count] of result.toolCounts) {
-      toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + count);
+    if (!streamOutput) {
+      for (const [tool, count] of result.toolCounts) {
+        toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + count);
+      }
     }
     if (result.errors.length > 0) {
       errors.push(...result.errors);
@@ -2782,6 +2886,7 @@ async function runRalphLoop(options) {
     verboseTools,
     autoCommit,
     allowAllPermissions,
+    silent,
     sdkClient
   } = options;
   const existingState = loadState();
@@ -2939,7 +3044,8 @@ Gracefully stopping Ralph loop...`);
         prompt: fullPrompt,
         model: currentModel,
         streamOutput,
-        compactTools: !verboseTools
+        compactTools: !verboseTools,
+        silent
       });
       const result = sdkResult.output;
       const toolCounts = sdkResult.toolCounts;
@@ -3459,6 +3565,11 @@ var RALPH_ARGS_SCHEMA = [
     name: "no-allow-all",
     type: "boolean",
     description: "Require interactive permission prompts"
+  },
+  {
+    name: "silent",
+    type: "boolean",
+    description: "Suppress tool execution details and other descriptive output"
   }
 ];
 
@@ -3817,6 +3928,7 @@ var noCommit = parsed.args["no-commit"];
 var disablePlugins = parsed.args["no-plugins"];
 var allowAll = parsed.args["allow-all"];
 var noAllowAll = parsed.args["no-allow-all"];
+var silent = parsed.args.silent;
 var autoCommit = !noCommit;
 var streamOutput = !noStream;
 var allowAllPermissions = allowAll && !noAllowAll;
@@ -3879,6 +3991,7 @@ async function main() {
       autoCommit,
       disablePlugins,
       allowAllPermissions,
+      silent,
       sdkClient
     });
   } catch (error) {

@@ -120,6 +120,7 @@ const noCommit = parsed.args["no-commit"] as boolean;
 const disablePlugins = parsed.args["no-plugins"] as boolean;
 const allowAll = parsed.args["allow-all"] as boolean;
 const noAllowAll = parsed.args["no-allow-all"] as boolean;
+const silent = parsed.args.silent as boolean;
 
 const autoCommit = !noCommit;
 const streamOutput = !noStream;
@@ -189,6 +190,7 @@ async function main(): Promise<void> {
       autoCommit,
       disablePlugins,
       allowAllPermissions,
+      silent,
       sdkClient,
     });
   } catch (error) {

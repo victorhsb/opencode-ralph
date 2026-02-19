@@ -77,6 +77,7 @@ export interface LoopOptions {
   autoCommit: boolean;
   disablePlugins: boolean;
   allowAllPermissions: boolean;
+  silent?: boolean;
   sdkClient: SdkClient;
 }
 
@@ -101,6 +102,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     verboseTools,
     autoCommit,
     allowAllPermissions,
+    silent,
     sdkClient,
   } = options;
 
@@ -273,6 +275,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         model: currentModel,
         streamOutput,
         compactTools: !verboseTools,
+        silent,
       });
 
       const result = sdkResult.output;

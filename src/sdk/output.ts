@@ -156,6 +156,68 @@ export function formatEvent(event: SdkEvent): string {
   }
 }
 
+export interface ToolResultData {
+  input?: Record<string, unknown>;
+  output?: string;
+  title?: string;
+}
+
+/**
+ * Format tool result for display with truncation.
+ *
+ * Shows:
+ * - File paths for file operations (read, edit, write)
+ * - Compact change summary (+N, -M) for edits
+ * - Top 10 lines of output (truncated with "..." if longer)
+ *
+ * @param toolName - Name of the tool
+ * @param result - Tool result data
+ * @returns Formatted display string
+ */
+export function formatToolResult(
+  toolName: string,
+  result: ToolResultData
+): string {
+  const lines: string[] = [];
+
+  // Extract file path from input if available
+  const input = result.input || {};
+  const filePath = typeof input.filePath === "string"
+    ? input.filePath
+    : typeof input.path === "string"
+      ? input.path
+      : undefined;
+
+  // Format based on tool type
+  if (filePath) {
+    lines.push(`  → ${filePath}`);
+  }
+
+  // Add change summary for edit operations
+  if (toolName === "edit" && result.output) {
+    // Parse output for change summary
+    const additions = (result.output.match(/^[+][^+]/gm) || []).length;
+    const deletions = (result.output.match(/^[-][^-]/gm) || []).length;
+    if (additions > 0 || deletions > 0) {
+      lines.push(`  → ${additions > 0 ? `+${additions}` : "0"}${deletions > 0 ? `, -${deletions}` : ""}`);
+    }
+  }
+
+  // Add output preview (truncated to 10 lines)
+  if (result.output && toolName !== "edit") {
+    const outputLines = result.output.split("\n");
+    const previewLines = outputLines.slice(0, 10);
+    for (const line of previewLines) {
+      lines.push(`  → ${line}`);
+    }
+    if (outputLines.length > 10) {
+      lines.push(`  → ... (${outputLines.length - 10} more lines)`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 /**
  * Format tool counts for display summary.
  *

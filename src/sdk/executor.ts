@@ -40,6 +40,12 @@ export interface SdkEvent {
   content?: string;
   /** Tool name (for tool events) */
   toolName?: string;
+  /** Tool result data (for tool_end events) */
+  result?: {
+    input?: Record<string, unknown>;
+    output?: string;
+    title?: string;
+  };
   /** Event timestamp */
   timestamp: number;
 }
@@ -265,24 +271,36 @@ function parseSdkEvent(event: unknown): SdkEvent {
     const part = (props.part || {}) as Record<string, unknown>;
     const partType = typeof part.type === "string" ? part.type : "";
     
-    // Handle tool usage
-    if (partType === "tool_use") {
-      const toolName = typeof part.name === "string" ? part.name : "unknown";
-      return {
-        type: "tool_start",
-        toolName,
-        timestamp,
-      };
-    }
-    
-    // Handle tool results
-    if (partType === "tool_result") {
-      const toolName = typeof part.name === "string" ? part.name : "unknown";
-      return {
-        type: "tool_end",
-        toolName,
-        timestamp,
-      };
+    // Handle tool parts
+    if (partType === "tool") {
+      const toolName = typeof part.tool === "string" ? part.tool : "unknown";
+      const state = (part.state || {}) as Record<string, unknown>;
+      const status = typeof state.status === "string" ? state.status : "";
+      
+      // Tool is starting (running state)
+      if (status === "running") {
+        return {
+          type: "tool_start",
+          toolName,
+          timestamp,
+        };
+      }
+      
+      // Tool completed
+      if (status === "completed") {
+        return {
+          type: "tool_end",
+          toolName,
+          result: {
+            input: typeof state.input === "object" && state.input !== null
+              ? state.input as Record<string, unknown>
+              : undefined,
+            output: typeof state.output === "string" ? state.output : undefined,
+            title: typeof state.title === "string" ? state.title : undefined,
+          },
+          timestamp,
+        };
+      }
     }
     
     // Handle text parts from assistant
@@ -342,7 +360,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
  * The message structure from SDK typically contains:
  * - role: "assistant"
  * - content: Array of content parts
- * - Each part can be text, thinking, tool_use, or tool_result
+ * - Each part can be text, thinking, or tool
  */
 function extractOutputFromMessage(
   message: unknown
@@ -374,8 +392,11 @@ function extractOutputFromMessage(
         }
 
         // Tool results (show summary)
-        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
-          output.push(`[Tool ${partObj.name} executed]`);
+        if (partObj.type === "tool" && typeof partObj.tool === "string") {
+          const state = (partObj.state || {}) as Record<string, unknown>;
+          if (state.status === "completed") {
+            output.push(`[Tool ${partObj.tool} executed]`);
+          }
         }
       }
     }
@@ -401,8 +422,11 @@ function extractOutputFromMessage(
         }
 
         // Tool results (show summary)
-        if (partObj.type === "tool_result" && typeof partObj.name === "string") {
-          output.push(`[Tool ${partObj.name} executed]`);
+        if (partObj.type === "tool" && typeof partObj.tool === "string") {
+          const state = (partObj.state || {}) as Record<string, unknown>;
+          if (state.status === "completed") {
+            output.push(`[Tool ${partObj.tool} executed]`);
+          }
         }
       }
     }

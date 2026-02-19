@@ -126,19 +126,19 @@ describe("supervisor cli", () => {
 });
 
 describe("streamed CLI output", () => {
-  test("shows compact tool summary when tool_use events stream", () => {
+  test("shows compact tool summary when tool events stream", () => {
     const cwd = makeTempDir();
     const events = [
       {
         type: "message.part.updated",
         properties: {
-          part: { type: "tool_use", name: "read" },
+          part: { type: "tool", tool: "read", state: { status: "running" } },
         },
       },
       {
         type: "message.part.updated",
         properties: {
-          part: { type: "tool_use", name: "edit" },
+          part: { type: "tool", tool: "edit", state: { status: "running" } },
         },
       },
       { type: "session.idle" },
@@ -164,7 +164,7 @@ describe("streamed CLI output", () => {
       {
         type: "message.part.updated",
         properties: {
-          part: { type: "tool_use", name: "bash" },
+          part: { type: "tool", tool: "bash", state: { status: "running" } },
         },
       },
       { type: "session.idle" },
@@ -195,7 +195,7 @@ describe("streamed CLI output", () => {
       {
         type: "message.part.updated",
         properties: {
-          part: { type: "tool_use", name: "read" },
+          part: { type: "tool", tool: "read", state: { status: "running" } },
         },
       },
       { type: "session.idle" },
@@ -228,7 +228,7 @@ describe("streamed CLI output", () => {
       {
         type: "message.part.updated",
         properties: {
-          part: { type: "tool_use", name: "glob" },
+          part: { type: "tool", tool: "glob", state: { status: "running" } },
         },
       },
       { type: "session.idle" },
@@ -246,5 +246,90 @@ describe("streamed CLI output", () => {
     expect(res.stdout).toContain("thinking line");
     expect(res.stdout).toContain("| Tools");
     expect(res.stdout).toContain("glob 1");
+  });
+
+  test("shows tool result details with file paths", () => {
+    const cwd = makeTempDir();
+    const events = [
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "read",
+            state: { status: "running" }
+          },
+        },
+      },
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "read",
+            state: {
+              status: "completed",
+              input: { filePath: "/test/file.txt" },
+              output: "line 1\nline 2\nline 3",
+              title: "Read file"
+            }
+          },
+        },
+      },
+      { type: "session.idle" },
+    ];
+
+    const res = runRalphSync(
+      cwd,
+      ["Simple task", "--max-iterations", "1", "--no-commit"],
+      fakeSdkEnv({
+        RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
+      }),
+    );
+
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("🔧 read...");
+    expect(res.stdout).toContain("/test/file.txt");
+    expect(res.stdout).toContain("✓ read");
+  });
+
+  test("suppresses tool details with --silent flag", () => {
+    const cwd = makeTempDir();
+    const events = [
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "tool", tool: "read", state: { status: "running" } },
+        },
+      },
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            tool: "read",
+            state: {
+              status: "completed",
+              input: { filePath: "/test/file.txt" },
+              output: "content"
+            }
+          },
+        },
+      },
+      { type: "session.idle" },
+    ];
+
+    const res = runRalphSync(
+      cwd,
+      ["Simple task", "--max-iterations", "1", "--no-commit", "--silent"],
+      fakeSdkEnv({
+        RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
+      }),
+    );
+
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).not.toContain("🔧 read...");
+    expect(res.stdout).not.toContain("/test/file.txt");
+    expect(res.stdout).not.toContain("✓ read");
   });
 });

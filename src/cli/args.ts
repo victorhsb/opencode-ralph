@@ -303,4 +303,9 @@ export const RALPH_ARGS_SCHEMA: ArgConfig[] = [
     type: "boolean",
     description: "Require interactive permission prompts",
   },
+  {
+    name: "silent",
+    type: "boolean",
+    description: "Suppress tool execution details and other descriptive output",
+  },
 ];

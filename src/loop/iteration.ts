@@ -5,6 +5,7 @@
  */
 
 import { executePrompt } from "../sdk/executor";
+import { formatToolResult } from "../sdk/output";
 import type { SdkClient } from "../sdk/client";
 
 export interface SdkIterationOptions {
@@ -13,6 +14,7 @@ export interface SdkIterationOptions {
   model?: string;
   streamOutput: boolean;
   compactTools: boolean;
+  silent?: boolean;
 }
 
 export interface SdkIterationResult {
@@ -23,7 +25,7 @@ export interface SdkIterationResult {
 }
 
 export async function executeSdkIteration(options: SdkIterationOptions): Promise<SdkIterationResult> {
-  const { client, prompt, model, streamOutput, compactTools } = options;
+  const { client, prompt, model, streamOutput, compactTools, silent } = options;
 
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
@@ -64,12 +66,19 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
       onEvent: (event) => {
         if (event.type === "tool_start" && event.toolName) {
           toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
-          if (streamOutput) {
-            if (compactTools) {
-              maybePrintToolSummary();
-            } else {
-              console.log(`| ${event.type === "tool_start" ? `🔧 ${event.toolName}...` : ""}`);
+          if (!silent && streamOutput) {
+            console.log(`🔧 ${event.toolName}...`);
+            lastPrintedAt = Date.now();
+          }
+        }
+
+        if (event.type === "tool_end" && event.toolName && !silent) {
+          if (streamOutput && event.result) {
+            const formattedResult = formatToolResult(event.toolName, event.result);
+            if (formattedResult) {
+              console.log(formattedResult);
             }
+            console.log(`✓ ${event.toolName}`);
             lastPrintedAt = Date.now();
           }
         }
