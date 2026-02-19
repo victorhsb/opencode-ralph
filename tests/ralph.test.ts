@@ -23,6 +23,14 @@ function runRalphSync(cwd: string, args: string[], env: Record<string, string> =
   };
 }
 
+function fakeSdkEnv(overrides: Record<string, string> = {}): Record<string, string> {
+  return {
+    RALPH_FAKE_SDK: "1",
+    RALPH_FAKE_OUTPUT: "<promise>COMPLETE</promise>",
+    ...overrides,
+  };
+}
+
 describe("supervisor cli", () => {
   test("rejects invalid supervisor-memory-limit", () => {
     const cwd = makeTempDir();
@@ -109,13 +117,134 @@ describe("supervisor cli", () => {
   test("supervisor disabled does not create supervisor files", () => {
     const cwd = makeTempDir();
 
-    const res = runRalphSync(cwd, ["Simple task", "--max-iterations", "1", "--no-commit", "--no-stream"], {
-      RALPH_FAKE_SDK: "1",
-      RALPH_FAKE_OUTPUT: "<promise>COMPLETE</promise>",
-    });
+    const res = runRalphSync(cwd, ["Simple task", "--max-iterations", "1", "--no-commit", "--no-stream"], fakeSdkEnv());
 
     expect(res.exitCode).toBe(0);
     expect(existsSync(join(cwd, ".ralph", "supervisor-suggestions.json"))).toBe(false);
     expect(existsSync(join(cwd, ".ralph", "supervisor-memory.md"))).toBe(false);
+  });
+});
+
+describe("streamed CLI output", () => {
+  test("shows compact tool summary when tool_use events stream", () => {
+    const cwd = makeTempDir();
+    const events = [
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "tool_use", name: "read" },
+        },
+      },
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "tool_use", name: "edit" },
+        },
+      },
+      { type: "session.idle" },
+    ];
+
+    const res = runRalphSync(
+      cwd,
+      ["Simple task", "--max-iterations", "1", "--no-commit"],
+      fakeSdkEnv({
+        RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
+      }),
+    );
+
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("| Tools");
+    expect(res.stdout).toMatch(/read\s+[1-9]/);
+    expect(res.stdout).toMatch(/edit\s+[1-9]/);
+  });
+
+  test("shows per-tool lines with --verbose-tools", () => {
+    const cwd = makeTempDir();
+    const events = [
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "tool_use", name: "bash" },
+        },
+      },
+      { type: "session.idle" },
+    ];
+
+    const res = runRalphSync(
+      cwd,
+      ["Simple task", "--max-iterations", "1", "--no-commit", "--verbose-tools"],
+      fakeSdkEnv({
+        RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
+      }),
+    );
+
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("🔧 bash...");
+  });
+
+  test("does not render streamed tool lines with --no-stream", () => {
+    const cwd = makeTempDir();
+    const events = [
+      {
+        type: "message.part.delta",
+        properties: {
+          field: "text",
+          delta: "stream only text\n",
+        },
+      },
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "tool_use", name: "read" },
+        },
+      },
+      { type: "session.idle" },
+    ];
+
+    const res = runRalphSync(
+      cwd,
+      ["Simple task", "--max-iterations", "1", "--no-commit", "--no-stream"],
+      fakeSdkEnv({
+        RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
+      }),
+    );
+
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("| Tools");
+    expect(res.stdout).not.toContain("🔧 read...");
+    expect(res.stdout).not.toContain("stream only text");
+  });
+
+  test("renders text deltas and tool usage in same run", () => {
+    const cwd = makeTempDir();
+    const events = [
+      {
+        type: "message.part.delta",
+        properties: {
+          field: "text",
+          delta: "thinking line\n",
+        },
+      },
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "tool_use", name: "glob" },
+        },
+      },
+      { type: "session.idle" },
+    ];
+
+    const res = runRalphSync(
+      cwd,
+      ["Simple task", "--max-iterations", "1", "--no-commit"],
+      fakeSdkEnv({
+        RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
+      }),
+    );
+
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("thinking line");
+    expect(res.stdout).toContain("| Tools");
+    expect(res.stdout).toContain("glob 1");
   });
 });

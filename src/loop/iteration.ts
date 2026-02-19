@@ -62,19 +62,19 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
       prompt,
       model,
       onEvent: (event) => {
-        if (!streamOutput) return;
-
         if (event.type === "tool_start" && event.toolName) {
           toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
-          if (compactTools) {
-            maybePrintToolSummary();
-          } else {
-            console.log(`| ${event.type === "tool_start" ? `🔧 ${event.toolName}...` : ""}`);
+          if (streamOutput) {
+            if (compactTools) {
+              maybePrintToolSummary();
+            } else {
+              console.log(`| ${event.type === "tool_start" ? `🔧 ${event.toolName}...` : ""}`);
+            }
+            lastPrintedAt = Date.now();
           }
-          lastPrintedAt = Date.now();
         }
 
-        if (event.type === "text" && event.content) {
+        if (streamOutput && event.type === "text" && event.content) {
           process.stdout.write(event.content);
           lastPrintedAt = Date.now();
         }
@@ -86,8 +86,10 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
 
     output = result.output;
 
-    for (const [tool, count] of result.toolCounts) {
-      toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + count);
+    if (!streamOutput) {
+      for (const [tool, count] of result.toolCounts) {
+        toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + count);
+      }
     }
 
     if (result.errors.length > 0) {

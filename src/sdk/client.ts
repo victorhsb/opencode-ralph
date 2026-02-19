@@ -31,6 +31,64 @@ export interface SdkClient {
   server: { url: string; close: () => void };
 }
 
+function parseFakeEventsFromEnv(): unknown[] {
+  const raw = process.env.RALPH_FAKE_EVENTS_JSON;
+  if (!raw?.trim()) {
+    return [{ type: "session.idle" }];
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {}
+
+  return [{ type: "session.idle" }];
+}
+
+function parseFakePromptPartsFromEnv(defaultOutput: string): Array<{ type: "text"; text: string }> {
+  const raw = process.env.RALPH_FAKE_OUTPUT_PARTS_JSON;
+  if (!raw?.trim()) {
+    return [{ type: "text", text: defaultOutput }];
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const parts: Array<{ type: "text"; text: string }> = [];
+      for (const part of parsed) {
+        if (
+          part &&
+          typeof part === "object" &&
+          (part as Record<string, unknown>).type === "text" &&
+          typeof (part as Record<string, unknown>).text === "string"
+        ) {
+          parts.push({
+            type: "text",
+            text: (part as Record<string, string>).text,
+          });
+        }
+      }
+      if (parts.length > 0) {
+        return parts;
+      }
+    }
+  } catch {}
+
+  return [{ type: "text", text: defaultOutput }];
+}
+
+function hasTerminalFakeEvent(events: unknown[]): boolean {
+  return events.some((event) => {
+    if (!event || typeof event !== "object") {
+      return false;
+    }
+    const type = (event as Record<string, unknown>).type;
+    return type === "session.idle" || type === "session.error";
+  });
+}
+
 /**
  * Load plugins from a config file.
  * Supports JSONC (with comments).
@@ -122,6 +180,8 @@ async function findAvailablePort(hostname: string, preferredPort: number): Promi
 export async function createSdkClient(options: SdkClientOptions): Promise<SdkClient> {
   if (process.env.RALPH_FAKE_SDK === "1") {
     const output = process.env.RALPH_FAKE_OUTPUT ?? "<promise>COMPLETE</promise>";
+    const fakeEvents = parseFakeEventsFromEnv();
+    const fakeParts = parseFakePromptPartsFromEnv(output);
     const client = {
       session: {
         create: async () => ({
@@ -130,7 +190,7 @@ export async function createSdkClient(options: SdkClientOptions): Promise<SdkCli
         }),
         prompt: async () => ({
           data: {
-            parts: [{ type: "text", text: output }],
+            parts: fakeParts,
           },
           error: undefined,
         }),
@@ -138,7 +198,12 @@ export async function createSdkClient(options: SdkClientOptions): Promise<SdkCli
       event: {
         subscribe: async () => ({
           stream: (async function* () {
-            yield { type: "session.idle" };
+            for (const event of fakeEvents) {
+              yield event;
+            }
+            if (!hasTerminalFakeEvent(fakeEvents)) {
+              yield { type: "session.idle" };
+            }
           })(),
         }),
       },
