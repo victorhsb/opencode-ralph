@@ -5,7 +5,7 @@
  * Handles session creation, event subscription, and tool tracking.
  */
 
-import type { OpencodeClient } from "@opencode-ai/sdk";
+import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 
 export interface StructuredOutput {
   /** Whether the task is complete */
@@ -32,20 +32,10 @@ export interface ExecutionResult {
 }
 
 export interface ExecutionOptions {
-  /** The OpenCode SDK client instance */
-  client: OpencodeClient;
-  /** The prompt text to send */
-  prompt: string;
-  /** Optional model override */
-  model?: string;
-  /** Optional agent to use */
-  agent?: string;
   /** Optional callback for real-time event display */
   onEvent?: (event: SdkEvent) => void;
   /** Optional abort signal for cancellation */
   signal?: AbortSignal;
-  /** Whether to use structured output for reliable completion detection */
-  useStructuredOutput?: boolean;
   /** JSON schema format for structured output (when useStructuredOutput is true) */
   format?: StructuredOutputSchema;
 }
@@ -110,9 +100,13 @@ const DEFAULT_STRUCTURED_OUTPUT_SCHEMA: StructuredOutputSchema = {
  * Each call creates a new session (no persistence across calls).
  */
 export async function executePrompt(
+  client: OpencodeClient,    // opencode sdk client
+  prompt: string,            // prompt text to send
+  model: string | undefined, // model to use
+  agent: string | undefined, // agent to use
   options: ExecutionOptions
 ): Promise<ExecutionResult> {
-  const { client, prompt, model, agent, onEvent, signal, useStructuredOutput, format } = options;
+  const { onEvent, signal, format } = options;
 
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
@@ -121,7 +115,7 @@ export async function executePrompt(
   try {
     // Create fresh session
     const sessionResponse = await client.session.create({
-      body: { title: `Ralph iteration ${Date.now()}` },
+      title: `Ralph iteration ${Date.now()}`,
     });
 
     if (sessionResponse.error || !sessionResponse.data) {
@@ -210,22 +204,24 @@ export async function executePrompt(
       console.log("using model", modelConfig)
     }
 
-    // Prepare request body with optional structured output format
-    const requestBody: Record<string, unknown> = {
-      model: modelConfig,
-      agent: agent,
+    const promptOptions: {
+      sessionID: string;
+      parts: { type: "text"; text: string }[];
+      format: StructuredOutputSchema;
+      agent?: string;
+      model?: { providerID: string; modelID: string };
+    } = {
+      sessionID: sessionId,
       parts: [{ type: "text" as const, text: prompt }],
+      format: format ?? DEFAULT_STRUCTURED_OUTPUT_SCHEMA,
     };
-
-    // Add structured output format if enabled
-    if (useStructuredOutput) {
-      requestBody.format = format ?? DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
+    if (agent !== undefined) {
+      promptOptions.agent = agent;
     }
-
-    const promptResponse = await client.session.prompt({
-      path: { id: sessionId },
-      body: requestBody,
-    });
+    if (modelConfig !== undefined) {
+      promptOptions.model = modelConfig;
+    }
+    const promptResponse = await client.session.prompt(promptOptions);
 
     if (promptResponse.error) {
       errors.push(`Prompt failed: ${promptResponse.error}`);
@@ -254,18 +250,19 @@ export async function executePrompt(
     const finalOutput = extractOutputFromMessage(result);
 
     // Extract structured output if enabled
-    const structuredOutput = useStructuredOutput
-      ? extractStructuredOutput(result)
-      : undefined;
+    const structuredOutput = extractStructuredOutput(result);
 
-    return {
+    const executionResult: ExecutionResult = {
       output: finalOutput || output,
       toolCounts,
       errors,
       success: true,
       exitCode: 0,
-      structuredOutput,
     };
+    if (structuredOutput !== undefined) {
+      executionResult.structuredOutput = structuredOutput;
+    }
+    return executionResult;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(errorMessage);
@@ -346,16 +343,20 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
       // Tool completed
       if (status === "completed") {
+        const toolResult: SdkEvent["result"] = {};
+        if (state.input !== undefined && typeof state.input === "object" && state.input !== null) {
+          toolResult.input = state.input as Record<string, unknown>;
+        }
+        if (typeof state.output === "string") {
+          toolResult.output = state.output;
+        }
+        if (typeof state.title === "string") {
+          toolResult.title = state.title;
+        }
         return {
           type: "tool_end",
           toolName,
-          result: {
-            input: typeof state.input === "object" && state.input !== null
-              ? state.input as Record<string, unknown>
-              : undefined,
-            output: typeof state.output === "string" ? state.output : undefined,
-            title: typeof state.title === "string" ? state.title : undefined,
-          },
+          result: toolResult,
           timestamp,
         };
       }
@@ -391,12 +392,21 @@ function parseSdkEvent(event: unknown): SdkEvent {
   // Handle session errors
   if (eventType === "session.error") {
     const error = (props.error || {}) as Record<string, unknown>;
-    const errorMessage =
-      typeof error.data?.message === "string"
-        ? error.data.message
-        : typeof error.message === "string"
-          ? error.message
-          : "Unknown error";
+    let errorMessage = "Unknown error";
+
+    // Try to get message from error.data.message
+    if (typeof error.data === "object" && error.data !== null) {
+      const errorData = error.data as Record<string, unknown>;
+      if (typeof errorData.message === "string") {
+        errorMessage = errorData.message;
+      }
+    }
+
+    // Fall back to error.message if no data.message
+    if (errorMessage === "Unknown error" && typeof error.message === "string") {
+      errorMessage = error.message;
+    }
+
     return {
       type: "error",
       content: errorMessage,
