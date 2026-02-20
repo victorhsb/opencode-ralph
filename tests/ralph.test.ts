@@ -34,7 +34,7 @@ function fakeSdkEnv(overrides: Record<string, string> = {}): Record<string, stri
 describe("supervisor cli", () => {
   test("rejects invalid supervisor-memory-limit", () => {
     const cwd = makeTempDir();
-    const res = runRalphSync(cwd, ["task", "--supervisor-memory-limit", "0"]);
+    const res = runRalphSync(cwd, ["--supervisor-memory-limit", "0", "-p", "test", "--dry-run"]);
     expect(res.exitCode).toBe(1);
     expect(res.stderr).toContain("--supervisor-memory-limit must be greater than 0");
   });
@@ -67,7 +67,7 @@ describe("supervisor cli", () => {
       ),
     );
 
-    const res = runRalphSync(cwd, ["--approve-suggestion", "sup-1"]);
+    const res = runRalphSync(cwd, ["suggestion", "approve", "sup-1"]);
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain("approved and applied");
 
@@ -106,7 +106,7 @@ describe("supervisor cli", () => {
       ),
     );
 
-    const res = runRalphSync(cwd, ["--reject-suggestion", "sup-2"]);
+    const res = runRalphSync(cwd, ["suggestion", "reject", "sup-2"]);
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain("rejected");
 
@@ -120,7 +120,7 @@ describe("supervisor cli", () => {
 
     const res = runRalphSync(
       cwd,
-      ["Simple task", "--max-iterations", "1", "--no-commit"],
+      ["-p", "Simple task", "-x", "1", "--no-commit"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -154,7 +154,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["Simple task", "--max-iterations", "1", "--no-commit"],
+      ["-p", "Simple task", "-x", "1", "--no-commit"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -180,7 +180,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["Simple task", "--max-iterations", "1", "--no-commit", "--verbose-tools"],
+      ["-p", "Simple task", "-x", "1", "--no-commit", "--verbose-tools"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -211,7 +211,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["Simple task", "--max-iterations", "1", "--no-commit", "--no-stream"],
+      ["-p", "Simple task", "-x", "1", "--no-commit", "-n"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -244,7 +244,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["Simple task", "--max-iterations", "1", "--no-commit"],
+      ["-p", "Simple task", "-x", "1", "--no-commit"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -289,7 +289,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["Simple task", "--max-iterations", "1", "--no-commit"],
+      ["-p", "Simple task", "-x", "1", "--no-commit"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -329,7 +329,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["Simple task", "--max-iterations", "1", "--no-commit", "--silent"],
+      ["-p", "Simple task", "-x", "1", "--no-commit", "--silent"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),

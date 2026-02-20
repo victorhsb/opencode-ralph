@@ -51,6 +51,7 @@
     "homepage": "https://github.com/victorhsb/open-ralph-wiggum#readme",
     "dependencies": {
         "@opencode-ai/sdk": "^0.15.0",
+        "commander": "^14.0.3",
         "zod": "^4.3.6"
     },
     "devDependencies": {
