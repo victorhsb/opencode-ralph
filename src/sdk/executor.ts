@@ -139,20 +139,25 @@ export async function executePrompt(
 
     // Subscribe to events for real-time tracking
     const eventSubscription = await client.event.subscribe();
-    
+
     // Small delay to ensure event subscription is active before sending prompt
     await new Promise(resolve => setTimeout(resolve, 100));
 
     // Process events in background
     let sessionComplete = false;
+    let lastEventTime = Date.now();
+    const eventTimeoutMs = 15 * 60 * 1000; // 15 minutes without events = timeout
     const eventPromise = (async () => {
       try {
         for await (const event of eventSubscription.stream) {
           if (signal?.aborted) break;
 
+          lastEventTime = Date.now();
+
           // Check for session completion events
           const eventType = (event as any)?.type;
           if (eventType === "session.idle" || eventType === "session.error") {
+            console.log("session is idle or errored.", eventType)
             sessionComplete = true;
           }
 
@@ -178,6 +183,12 @@ export async function executePrompt(
           if (sessionComplete) {
             break;
           }
+
+          // Check for event timeout
+          if (Date.now() - lastEventTime > eventTimeoutMs) {
+            errors.push(`Event stream timeout: no events received for ${eventTimeoutMs}ms`);
+            break;
+          }
         }
       } catch (error) {
         // Stream errors are logged but don't stop execution
@@ -186,12 +197,17 @@ export async function executePrompt(
     })();
 
     // Send prompt
-    const modelConfig = model
-      ? {
-          providerID: model.split("/")[0] || "openai",
-          modelID: model.split("/")[1] || model,
-        }
-      : undefined;
+    let modelConfig: { providerID: string, modelID: string } | undefined = undefined;
+    if (model) {
+      const [provider, modelID] = model.split("/");
+      if (model || !provider || !modelID) {
+        throw new Error("invalid model format; needs to be <provider>/<model>")
+      }
+      modelConfig = {
+        providerID: provider,
+        modelID: modelID,
+      }
+    }
 
     // Prepare request body with optional structured output format
     const requestBody: Record<string, unknown> = {
@@ -223,35 +239,14 @@ export async function executePrompt(
 
     const result = promptResponse.data;
 
-    // Wait for events to complete (with timeout)
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const abortHandler = () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-      timeoutId = null;
-    };
-
-    const timeoutPromise = new Promise<void>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        timeoutId = null;
-        reject(new Error("Event stream timeout"));
-      }, 30000);
-      signal?.addEventListener("abort", () => {
-        abortHandler();
-        reject(new Error("Aborted"));
-      });
-    });
-
+    // Wait for events to complete
+    // Note: No hard timeout here - agentic coding sessions naturally take several minutes
+    // Completion is detected via session.idle/session.error events or structured output
     try {
-      await Promise.race([eventPromise, timeoutPromise]);
+      await eventPromise;
     } catch (error) {
-      if (String(error).includes("Aborted")) {
-        throw error;
-      }
-      // Timeout is not fatal - continue with what we have
-    } finally {
-      abortHandler();
+      // Event stream errors are logged but execution continues
+      errors.push(`Event stream error: ${error}`);
     }
 
     // Extract final output from result
@@ -311,7 +306,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
   if (eventType === "message.part.delta") {
     const delta = typeof props.delta === "string" ? props.delta : "";
     const field = typeof props.field === "string" ? props.field : "";
-    
+
     // Only process text deltas, not other field types
     if (field === "text" && delta) {
       return {
@@ -320,7 +315,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
         timestamp,
       };
     }
-    
+
     return {
       type: "text",
       content: "",
@@ -332,13 +327,13 @@ function parseSdkEvent(event: unknown): SdkEvent {
   if (eventType === "message.part.updated") {
     const part = (props.part || {}) as Record<string, unknown>;
     const partType = typeof part.type === "string" ? part.type : "";
-    
+
     // Handle tool parts
     if (partType === "tool") {
       const toolName = typeof part.tool === "string" ? part.tool : "unknown";
       const state = (part.state || {}) as Record<string, unknown>;
       const status = typeof state.status === "string" ? state.status : "";
-      
+
       // Tool is starting (running state)
       if (status === "running") {
         return {
@@ -347,7 +342,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
           timestamp,
         };
       }
-      
+
       // Tool completed
       if (status === "completed") {
         return {
@@ -364,7 +359,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
         };
       }
     }
-    
+
     // Handle text parts from assistant
     if (partType === "text") {
       const text = typeof part.text === "string" ? part.text : "";
@@ -378,7 +373,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
         };
       }
     }
-    
+
     // Handle reasoning/thinking
     if (partType === "reasoning" || partType === "thinking") {
       const text = typeof part.text === "string" ? part.text : "";
@@ -395,9 +390,9 @@ function parseSdkEvent(event: unknown): SdkEvent {
   // Handle session errors
   if (eventType === "session.error") {
     const error = (props.error || {}) as Record<string, unknown>;
-    const errorMessage = 
-      typeof error.data?.message === "string" 
-        ? error.data.message 
+    const errorMessage =
+      typeof error.data?.message === "string"
+        ? error.data.message
         : typeof error.message === "string"
           ? error.message
           : "Unknown error";

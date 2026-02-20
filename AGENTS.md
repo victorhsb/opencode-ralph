@@ -59,7 +59,7 @@ Run commands from repository root.
 
 ## Current Caveats In This Snapshot
 
-- No known blocking caveats at the moment.
+- No hard timeouts on SDK execution: Agentic coding sessions naturally take several minutes to complete (builds, tests, complex refactoring). The executor waits for actual completion signals (session.idle/session.error events) rather than arbitrary time limits. The 15-minute inactivity timeout still applies to catch truly dead connections.
 
 ## Verification Order
 

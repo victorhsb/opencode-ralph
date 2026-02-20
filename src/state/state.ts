@@ -109,10 +109,10 @@ export class StateValidationError extends Error {
 
 function backupCorruptedFile(filePath: string): void {
   if (!existsSync(filePath)) return;
-  
+
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = filePath.replace(/(\.[^.]+)$/, `.corrupted-${timestamp}$1`);
-  
+
   try {
     renameSync(filePath, backupPath);
   } catch (e) {
@@ -124,13 +124,13 @@ function migrateState(raw: unknown): unknown {
   if (typeof raw !== "object" || raw === null) {
     return raw;
   }
-  
+
   const state = raw as Record<string, unknown>;
-  
+
   if (!("version" in state)) {
     state.version = 1;
   }
-  
+
   return state;
 }
 
@@ -139,13 +139,13 @@ export function loadState(): RalphState | null {
   if (!existsSync(path)) {
     return null;
   }
-  
+
   try {
     const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw);
-    
+
     const migrated = migrateState(parsed);
-    
+
     const result = RalphStateSchema.safeParse(migrated);
 
     if (result.success) {
@@ -163,9 +163,9 @@ export function loadState(): RalphState | null {
     const errorDetails = result.error.errors
       .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
       .join("\n");
-    
+
     backupCorruptedFile(path);
-    
+
     throw new StateValidationError(
       `State file validation failed. The corrupted file has been backed up.\n` +
       `Validation errors:\n${errorDetails}`,
@@ -176,13 +176,13 @@ export function loadState(): RalphState | null {
     if (e instanceof StateValidationError) {
       throw e;
     }
-    
+
     if ((e as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
     }
-    
+
     backupCorruptedFile(path);
-    
+
     throw new StateValidationError(
       `Failed to load state file. The corrupted file has been backed up.\n` +
       `Error: ${e instanceof Error ? e.message : String(e)}`,
@@ -196,7 +196,7 @@ export function clearState(): void {
   if (existsSync(path)) {
     try {
       require("fs").unlinkSync(path);
-    } catch {}
+    } catch { }
   }
 }
 
@@ -209,11 +209,11 @@ export function loadHistory(): RalphHistory {
       struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
     };
   }
-  
+
   try {
     const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw);
-    
+
     const result = RalphHistorySchema.safeParse(parsed);
 
     if (result.success) {
@@ -231,9 +231,9 @@ export function loadHistory(): RalphHistory {
     const errorDetails = result.error.errors
       .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
       .join("\n");
-    
+
     backupCorruptedFile(path);
-    
+
     throw new StateValidationError(
       `History file validation failed. The corrupted file has been backed up.\n` +
       `Validation errors:\n${errorDetails}`,
@@ -244,7 +244,7 @@ export function loadHistory(): RalphHistory {
     if (e instanceof StateValidationError) {
       throw e;
     }
-    
+
     if ((e as NodeJS.ErrnoException).code === "ENOENT") {
       return {
         iterations: [],
@@ -252,9 +252,9 @@ export function loadHistory(): RalphHistory {
         struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
       };
     }
-    
+
     backupCorruptedFile(path);
-    
+
     throw new StateValidationError(
       `Failed to load history file. The corrupted file has been backed up.\n` +
       `Error: ${e instanceof Error ? e.message : String(e)}`,
@@ -273,6 +273,6 @@ export function clearHistory(): void {
   if (existsSync(path)) {
     try {
       require("fs").unlinkSync(path);
-    } catch {}
+    } catch { }
   }
 }

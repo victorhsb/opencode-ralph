@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
-import { createSdkClient, type SdkClient } from "./src/sdk/client";
+import { createSdkClient, closeSdkServer, type SdkClient } from "./src/sdk/client";
 import type { RalphState } from "./src/state/state";
 import { runRalphLoop } from "./src/loop/loop";
 import { readPromptFile } from "./src/io/files";
@@ -139,7 +139,7 @@ if (promptFile) {
   promptSource = promptFile;
   prompt = readPromptFile(promptFile);
 } else if (promptParts.length === 1 && existsSync(promptParts[0])) {
-  promptSource = promptParts[0];
+  promptSource =  promptParts[0];
   prompt = readPromptFile(promptParts[0]);
 } else {
   prompt = promptParts.join(" ");
@@ -253,8 +253,8 @@ async function main(): Promise<void> {
   } finally {
     if (sdkClient) {
       try {
-        sdkClient.server.close();
-      } catch {}
+        await closeSdkServer(sdkClient.server, 5000, true);
+      } catch { }
     }
   }
 }

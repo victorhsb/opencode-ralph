@@ -42,7 +42,6 @@ import {
 import { buildPrompt } from "../prompts/prompts";
 import {
   formatDurationLong,
-  formatDuration,
   printIterationSummary,
   checkCompletion,
   extractErrors,
@@ -54,8 +53,7 @@ import {
   captureFileSnapshot,
   getModifiedFilesSinceSnapshot,
 } from "../fs-tracker/fs-tracker";
-import { executeSdkIteration, type SdkIterationResult } from "./iteration";
-import type { StructuredOutput } from "../sdk/executor";
+import { executeSdkIteration } from "./iteration";
 
 export interface LoopOptions {
   prompt: string;
@@ -217,10 +215,10 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     stopping = true;
     console.log("\nGracefully stopping Ralph loop...");
 
+    // Close server synchronously - don't wait for async cleanup on SIGINT
     try {
-      console.log("🧹 Closing SDK server...");
       sdkClient.server.close();
-    } catch {}
+    } catch { }
 
     clearState();
     console.log("Loop cancelled.");
@@ -275,8 +273,6 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     const iterationStart = Date.now();
 
     try {
-      console.log("🚀 Using OpenCode SDK for execution...");
-
       const sdkResult = await executeSdkIteration({
         client: sdkClient,
         prompt: fullPrompt,
@@ -537,7 +533,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
             await $`git commit -m "Ralph iteration ${state.iteration}: work in progress"`.quiet();
             console.log(`📝 Auto-committed changes`);
           }
-        } catch {}
+        } catch { }
       }
 
       state.iteration++;
@@ -572,8 +568,4 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     }
   }
 
-  try {
-    console.log("🧹 Closing SDK server...");
-    sdkClient.server.close();
-  } catch {}
 }

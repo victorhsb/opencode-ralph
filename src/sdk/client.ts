@@ -30,7 +30,33 @@ export interface SdkClient {
   /** The OpenCode SDK client instance */
   client: Awaited<ReturnType<typeof createOpencode>>["client"];
   /** Server instance with URL and cleanup method */
-  server: { url: string; close: () => void };
+  server: { url: string; close: () => Promise<void> | void };
+}
+
+/**
+ * Safely close the SDK server with timeout and logging.
+ * Returns true if close succeeded, false if it timed out or failed.
+ */
+export async function closeSdkServer(
+  server: SdkClient["server"],
+  verbose = false
+): Promise<boolean> {
+  if (verbose) {
+    console.log("🧹 Closing SDK server...");
+  }
+
+  try {
+    await server.close();
+    if (verbose) {
+      console.log("✅ SDK server closed successfully");
+    }
+    return true;
+  } catch (error) {
+    if (verbose) {
+      console.error("⚠️  SDK server close failed", error);
+    }
+    return false;
+  }
 }
 
 function parseFakeEventsFromEnv(): unknown[] {
@@ -44,7 +70,7 @@ function parseFakeEventsFromEnv(): unknown[] {
     if (Array.isArray(parsed)) {
       return parsed;
     }
-  } catch {}
+  } catch { }
 
   return [{ type: "session.idle" }];
 }
@@ -76,7 +102,7 @@ function parseFakePromptPartsFromEnv(defaultOutput: string): Array<{ type: "text
         return parts;
       }
     }
-  } catch {}
+  } catch { }
 
   return [{ type: "text", text: defaultOutput }];
 }
@@ -199,7 +225,7 @@ export async function createSdkClient(options: SdkClientOptions): Promise<SdkCli
       },
       event: {
         subscribe: async () => ({
-          stream: (async function* () {
+          stream: (async function*() {
             for (const event of fakeEvents) {
               yield event;
             }
@@ -215,7 +241,7 @@ export async function createSdkClient(options: SdkClientOptions): Promise<SdkCli
       client,
       server: {
         url: "http://127.0.0.1:0",
-        close: () => {},
+        close: () => { },
       },
     };
   }

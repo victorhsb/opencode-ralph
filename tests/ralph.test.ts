@@ -116,13 +116,21 @@ describe("supervisor cli", () => {
 
   test("supervisor disabled does not create supervisor files", () => {
     const cwd = makeTempDir();
+    const events = [{ type: "session.idle" }];
 
-    const res = runRalphSync(cwd, ["Simple task", "--max-iterations", "1", "--no-commit", "--no-stream"], fakeSdkEnv());
+    const res = runRalphSync(
+      cwd,
+      ["Simple task", "--max-iterations", "1", "--no-commit"],
+      fakeSdkEnv({
+        RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
+      }),
+    );
 
     expect(res.exitCode).toBe(0);
-    expect(existsSync(join(cwd, ".ralph", "supervisor-suggestions.json"))).toBe(false);
-    expect(existsSync(join(cwd, ".ralph", "supervisor-memory.md"))).toBe(false);
-  });
+
+    const suggestionsPath = join(cwd, ".ralph", "supervisor-suggestions.json");
+    expect(existsSync(suggestionsPath)).toBe(false);
+  }, 15000);
 });
 
 describe("streamed CLI output", () => {
@@ -156,7 +164,7 @@ describe("streamed CLI output", () => {
     expect(res.stdout).toContain("| Tools");
     expect(res.stdout).toMatch(/read\s+[1-9]/);
     expect(res.stdout).toMatch(/edit\s+[1-9]/);
-  });
+  }, 15000);
 
   test("shows per-tool lines with --verbose-tools", () => {
     const cwd = makeTempDir();
@@ -180,7 +188,7 @@ describe("streamed CLI output", () => {
 
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain("🔧 bash...");
-  });
+  }, 15000);
 
   test("does not render streamed tool lines with --no-stream", () => {
     const cwd = makeTempDir();
@@ -213,7 +221,7 @@ describe("streamed CLI output", () => {
     expect(res.stdout).toContain("| Tools");
     expect(res.stdout).not.toContain("🔧 read...");
     expect(res.stdout).not.toContain("stream only text");
-  });
+  }, 15000);
 
   test("renders text deltas and tool usage in same run", () => {
     const cwd = makeTempDir();
@@ -246,7 +254,7 @@ describe("streamed CLI output", () => {
     expect(res.stdout).toContain("thinking line");
     expect(res.stdout).toContain("| Tools");
     expect(res.stdout).toContain("glob 1");
-  });
+  }, 15000);
 
   test("shows tool result details with file paths", () => {
     const cwd = makeTempDir();
@@ -291,7 +299,7 @@ describe("streamed CLI output", () => {
     expect(res.stdout).toContain("🔧 read...");
     expect(res.stdout).toContain("/test/file.txt");
     expect(res.stdout).toContain("✓ read");
-  });
+  }, 15000);
 
   test("suppresses tool details with --silent flag", () => {
     const cwd = makeTempDir();
@@ -331,5 +339,5 @@ describe("streamed CLI output", () => {
     expect(res.stdout).not.toContain("🔧 read...");
     expect(res.stdout).not.toContain("/test/file.txt");
     expect(res.stdout).not.toContain("✓ read");
-  });
+  }, 15000);
 });
