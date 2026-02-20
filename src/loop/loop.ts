@@ -78,6 +78,7 @@ export interface LoopOptions {
   disablePlugins: boolean;
   allowAllPermissions: boolean;
   silent?: boolean;
+  agent?: string;
   sdkClient: SdkClient;
 }
 
@@ -103,6 +104,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     autoCommit,
     allowAllPermissions,
     silent,
+    agent,
     sdkClient,
   } = options;
 
@@ -189,6 +191,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     console.log(`Min iterations: ${minIterations}`);
     console.log(`Max iterations: ${maxIterations > 0 ? maxIterations : "unlimited"}`);
     if (initialModel) console.log(`Model: ${initialModel}`);
+    if (agent) console.log(`Agent: ${agent}`);
     if (supervisorConfig.enabled) {
       console.log(`Supervisor: ENABLED${supervisorConfig.model ? ` / ${supervisorConfig.model}` : ""}`);
     }
@@ -274,6 +277,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         client: sdkClient,
         prompt: fullPrompt,
         model: currentModel,
+        agent,
         streamOutput,
         compactTools: !verboseTools,
         silent,

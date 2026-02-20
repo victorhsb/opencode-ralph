@@ -16,6 +16,7 @@ import { readPromptFile } from "./src/io/files";
 
 import { displayHelp, parseArgs, RALPH_ARGS_SCHEMA } from "./src/cli/args";
 import { buildPrompt } from "./src/prompts/prompts";
+import { checkAgentExists, formatAgentList } from "./src/sdk/agents";
 
 import {
   handleStatusCommand,
@@ -123,6 +124,7 @@ const disablePlugins = parsed.args["no-plugins"] as boolean;
 const allowAll = parsed.args["allow-all"] as boolean;
 const noAllowAll = parsed.args["no-allow-all"] as boolean;
 const silent = parsed.args.silent as boolean;
+const agent = parsed.args.agent as string;
 const dryRun = parsed.args["dry-run"] as boolean;
 
 const autoCommit = !noCommit;
@@ -200,6 +202,19 @@ async function main(): Promise<void> {
       allowAllPermissions: allowAllPermissions,
     });
     console.log(`✅ SDK client ready (${sdkClient.server.url})`);
+
+    // Validate agent if specified
+    if (agent) {
+      const agentCheck = await checkAgentExists(sdkClient.client, agent);
+      if (!agentCheck.valid) {
+        console.error(`Error: ${agentCheck.error}`);
+        console.error("\nAvailable primary agents:");
+        console.error(formatAgentList(agentCheck.availableAgents || []));
+        console.error("\nRun without --agent to use the default agent.");
+        process.exit(1);
+      }
+      console.log(`🤖 Using agent: ${agent}`);
+    }
   } catch (error) {
     console.error("❌ Failed to initialize SDK client:", error);
     console.error("SDK initialization failed. Please ensure OpenCode is properly installed and configured.");
@@ -229,6 +244,7 @@ async function main(): Promise<void> {
       disablePlugins,
       allowAllPermissions,
       silent,
+      agent,
       sdkClient,
     });
   } catch (error) {

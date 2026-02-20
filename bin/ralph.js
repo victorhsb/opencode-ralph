@@ -14571,7 +14571,7 @@ __export(exports_executor, {
   executePrompt: () => executePrompt
 });
 async function executePrompt(options) {
-  const { client: client3, prompt, model, onEvent, signal } = options;
+  const { client: client3, prompt, model, agent, onEvent, signal } = options;
   const toolCounts = new Map;
   const errors3 = [];
   let output = "";
@@ -14626,6 +14626,7 @@ async function executePrompt(options) {
       path: { id: sessionId },
       body: {
         model: modelConfig,
+        agent,
         parts: [{ type: "text", text: prompt }]
       }
     });
@@ -16761,7 +16762,7 @@ function formatToolResult(toolName, result) {
 
 // src/loop/iteration.ts
 async function executeSdkIteration(options) {
-  const { client: client3, prompt, model, streamOutput, compactTools, silent } = options;
+  const { client: client3, prompt, model, agent, streamOutput, compactTools, silent } = options;
   const toolCounts = new Map;
   const errors3 = [];
   let output = "";
@@ -16795,6 +16796,7 @@ async function executeSdkIteration(options) {
       client: client3.client,
       prompt,
       model,
+      agent,
       onEvent: (event) => {
         if (event.type === "tool_start" && event.toolName) {
           toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
@@ -16888,6 +16890,7 @@ async function runRalphLoop(options) {
     autoCommit,
     allowAllPermissions,
     silent,
+    agent,
     sdkClient
   } = options;
   const existingState = loadState();
@@ -16966,6 +16969,8 @@ async function runRalphLoop(options) {
     console.log(`Max iterations: ${maxIterations > 0 ? maxIterations : "unlimited"}`);
     if (initialModel)
       console.log(`Model: ${initialModel}`);
+    if (agent)
+      console.log(`Agent: ${agent}`);
     if (supervisorConfig.enabled) {
       console.log(`Supervisor: ENABLED${supervisorConfig.model ? ` / ${supervisorConfig.model}` : ""}`);
     }
@@ -17045,6 +17050,7 @@ Gracefully stopping Ralph loop...`);
         client: sdkClient,
         prompt: fullPrompt,
         model: currentModel,
+        agent,
         streamOutput,
         compactTools: !verboseTools,
         silent
@@ -17374,7 +17380,7 @@ function parseArgs(argList, schema) {
   let i = 0;
   while (i < argsToProcess.length) {
     const arg = argsToProcess[i];
-    if (!arg.startsWith("-")) {
+    if (arg && !arg.startsWith("-")) {
       promptParts.push(arg);
       i++;
       continue;
@@ -17455,6 +17461,11 @@ var RALPH_ARGS_SCHEMA = [
     name: "model",
     type: "string",
     description: "Model to use (e.g., anthropic/claude-sonnet-4)"
+  },
+  {
+    name: "agent",
+    type: "string",
+    description: "Agent to use for this session (primary agents only)"
   },
   {
     name: "min-iterations",
@@ -17580,6 +17591,45 @@ var RALPH_ARGS_SCHEMA = [
   }
 ];
 
+// src/sdk/agents.ts
+async function listPrimaryAgents(client3) {
+  const response = await client3.app.agents();
+  if (!response.data || !Array.isArray(response.data)) {
+    return [];
+  }
+  const primaryAgents = response.data.filter((agent) => agent.mode === "primary");
+  return primaryAgents.map((agent) => ({
+    name: agent.name,
+    description: agent.description
+  }));
+}
+function formatAgentList(agents) {
+  if (agents.length === 0) {
+    return "  (no primary agents available)";
+  }
+  const lines = [];
+  const maxNameLength = Math.max(...agents.map((a) => a.name.length), 10);
+  for (const agent of agents) {
+    const namePadded = agent.name.padEnd(maxNameLength);
+    const desc = agent.description ? ` - ${agent.description}` : "";
+    lines.push(`  ${namePadded}${desc}`);
+  }
+  return lines.join(`
+`);
+}
+async function checkAgentExists(client3, agentName) {
+  const agents = await listPrimaryAgents(client3);
+  const found = agents.find((a) => a.name === agentName);
+  if (found) {
+    return { valid: true };
+  }
+  return {
+    valid: false,
+    error: `Agent '${agentName}' not found.`,
+    availableAgents: agents
+  };
+}
+
 // src/cli/commands.ts
 init_state();
 init_supervisor();
@@ -17598,7 +17648,7 @@ function handleStatusCommand(args) {
   const tasksPath = getTasksFilePath();
   console.log(`
 \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
-\u2551                    Ralph Wiggum Status                           \u2551
+\u2551                    Opencode Ralph Status                         \u2551
 \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 `);
   if (state?.active) {
@@ -17936,6 +17986,7 @@ var disablePlugins = parsed.args["no-plugins"];
 var allowAll = parsed.args["allow-all"];
 var noAllowAll = parsed.args["no-allow-all"];
 var silent = parsed.args.silent;
+var agent = parsed.args.agent;
 var dryRun = parsed.args["dry-run"];
 var autoCommit = !noCommit;
 var streamOutput = !noStream;
@@ -18007,6 +18058,19 @@ async function main() {
       allowAllPermissions
     });
     console.log(`\u2705 SDK client ready (${sdkClient.server.url})`);
+    if (agent) {
+      const agentCheck = await checkAgentExists(sdkClient.client, agent);
+      if (!agentCheck.valid) {
+        console.error(`Error: ${agentCheck.error}`);
+        console.error(`
+Available primary agents:`);
+        console.error(formatAgentList(agentCheck.availableAgents || []));
+        console.error(`
+Run without --agent to use the default agent.`);
+        process.exit(1);
+      }
+      console.log(`\uD83E\uDD16 Using agent: ${agent}`);
+    }
   } catch (error48) {
     console.error("\u274C Failed to initialize SDK client:", error48);
     console.error("SDK initialization failed. Please ensure OpenCode is properly installed and configured.");
@@ -18035,6 +18099,7 @@ async function main() {
       disablePlugins,
       allowAllPermissions,
       silent,
+      agent,
       sdkClient
     });
   } catch (error48) {

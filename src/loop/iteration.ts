@@ -12,6 +12,7 @@ export interface SdkIterationOptions {
   client: SdkClient;
   prompt: string;
   model?: string;
+  agent?: string;
   streamOutput: boolean;
   compactTools: boolean;
   silent?: boolean;
@@ -25,7 +26,7 @@ export interface SdkIterationResult {
 }
 
 export async function executeSdkIteration(options: SdkIterationOptions): Promise<SdkIterationResult> {
-  const { client, prompt, model, streamOutput, compactTools, silent } = options;
+  const { client, prompt, model, agent, streamOutput, compactTools, silent } = options;
 
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
@@ -63,6 +64,7 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
       client: client.client,
       prompt,
       model,
+      agent,
       onEvent: (event) => {
         if (event.type === "tool_start" && event.toolName) {
           toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);

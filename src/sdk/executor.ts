@@ -27,6 +27,8 @@ export interface ExecutionOptions {
   prompt: string;
   /** Optional model override */
   model?: string;
+  /** Optional agent to use */
+  agent?: string;
   /** Optional callback for real-time event display */
   onEvent?: (event: SdkEvent) => void;
   /** Optional abort signal for cancellation */
@@ -65,7 +67,7 @@ export interface SdkEvent {
 export async function executePrompt(
   options: ExecutionOptions
 ): Promise<ExecutionResult> {
-  const { client, prompt, model, onEvent, signal } = options;
+  const { client, prompt, model, agent, onEvent, signal } = options;
 
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
@@ -150,6 +152,7 @@ export async function executePrompt(
       path: { id: sessionId },
       body: {
         model: modelConfig,
+        agent: agent,
         parts: [{ type: "text" as const, text: prompt }],
       },
     });

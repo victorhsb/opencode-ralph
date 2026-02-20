@@ -65,7 +65,7 @@ export function parseArgs<T extends Record<string, unknown>>(
   while (i < argsToProcess.length) {
     const arg = argsToProcess[i];
 
-    if (!arg.startsWith("-")) {
+    if (arg && !arg.startsWith("-")) {
       promptParts.push(arg);
       i++;
       continue;
@@ -190,6 +190,11 @@ export const RALPH_ARGS_SCHEMA: ArgConfig[] = [
     name: "model",
     type: "string",
     description: "Model to use (e.g., anthropic/claude-sonnet-4)",
+  },
+  {
+    name: "agent",
+    type: "string",
+    description: "Agent to use for this session (primary agents only)",
   },
   {
     name: "min-iterations",

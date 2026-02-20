@@ -14,6 +14,8 @@ import { createServer } from "net";
 export interface SdkClientOptions {
   /** Model identifier (e.g., "openai/gpt-4") */
   model?: string;
+  /** Agent to use for the session */
+  agent?: string;
   /** Filter plugins to auth-only */
   filterPlugins?: boolean;
   /** Allow all permissions for non-interactive use */
