@@ -74,8 +74,8 @@ describe("Configuration constants", () => {
 
   test("Timing constants are correct", () => {
     expect(TOOL_SUMMARY_INTERVAL_MS).toBe(3000);
-    expect(HEARTBEAT_INTERVAL_MS).toBe(10000);
-    expect(EVENT_STREAM_TIMEOUT_MS).toBe(30000);
+    expect(HEARTBEAT_INTERVAL_MS).toBe(15000);
+    expect(EVENT_STREAM_TIMEOUT_MS).toBe(3600000);
     expect(EVENT_SUBSCRIPTION_DELAY_MS).toBe(100);
     expect(BETWEEN_ITERATIONS_DELAY_MS).toBe(1000);
     expect(ERROR_ITERATIONS_DELAY_MS).toBe(2000);

@@ -9,28 +9,26 @@ import { statSync } from "fs";
 
 export function readPromptFile(path: string): string {
   if (!existsSync(path)) {
-    console.error(`Error: Prompt file not found: ${path}`);
-    process.exit(1);
+    throw new Error(`Prompt file not found: ${path}`);
   }
   try {
     const stat = statSync(path);
     if (!stat.isFile()) {
-      console.error(`Error: Prompt path is not a file: ${path}`);
-      process.exit(1);
+      throw new Error(`Prompt path is not a file: ${path}`);
     }
-  } catch {
-    console.error(`Error: Unable to stat prompt file: ${path}`);
-    process.exit(1);
+  } catch (e) {
+    if (e instanceof Error && e.message.includes(`Prompt path is not a file`)) {
+      throw e;
+    }
+    throw new Error(`Unable to stat prompt file: ${path}`);
   }
   try {
     const content = readFileSync(path, "utf-8");
     if (!content.trim()) {
-      console.error(`Error: Prompt file is empty: ${path}`);
-      process.exit(1);
+      throw new Error(`Prompt file is empty: ${path}`);
     }
     return content;
   } catch {
-    console.error(`Error: Unable to read prompt file: ${path}`);
-    process.exit(1);
+    throw new Error(`Unable to read prompt file: ${path}`);
   }
 }

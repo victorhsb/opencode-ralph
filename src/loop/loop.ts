@@ -107,7 +107,6 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     silent,
     agent,
     sdkClient,
-    useStructuredOutput = false,
   } = options;
 
   const existingState = loadState();
@@ -261,7 +260,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     const iterInfo = maxIterations > 0 ? ` / ${maxIterations}` : "";
     const minInfo = minIterations > 1 && state.iteration < minIterations ? ` (min: ${minIterations})` : "";
     console.log(`\n🔄 Iteration ${state.iteration}${iterInfo}${minInfo}`);
-    console.log("─".repeat(68));
+    console.log("═".repeat(68));
 
     const contextAtStart = loadContext();
 

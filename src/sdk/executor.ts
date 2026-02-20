@@ -200,13 +200,14 @@ export async function executePrompt(
     let modelConfig: { providerID: string, modelID: string } | undefined = undefined;
     if (model) {
       const [provider, modelID] = model.split("/");
-      if (model || !provider || !modelID) {
+      if (!provider || !modelID) {
         throw new Error("invalid model format; needs to be <provider>/<model>")
       }
       modelConfig = {
         providerID: provider,
         modelID: modelID,
       }
+      console.log("using model", modelConfig)
     }
 
     // Prepare request body with optional structured output format
