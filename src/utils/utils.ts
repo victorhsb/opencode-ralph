@@ -68,32 +68,48 @@ export function printIterationSummary(params: {
 
 export function checkCompletion(output: string, promise: string): boolean {
   const escapedPromise = escapeRegex(promise);
+  
+  // Use matchAll to get all matches with their indices
   const promisePattern = new RegExp(`<promise>\\s*${escapedPromise}\\s*</promise>`, "gi");
+  const matches = Array.from(output.matchAll(promisePattern));
+  if (matches.length === 0) return false;
 
-  const matches = output.match(promisePattern);
-  if (!matches) return false;
+  const negationPatterns = [
+    /\bnot\s+(yet\s+)?(say|output|write|respond|print)/,
+    /\bdon'?t\s+(say|output|write|respond|print)/,
+    /\bwon'?t\s+(say|output|write|respond|print)/,
+    /\bwill\s+not\s+(say|output|write|respond|print)/,
+    /\bshould\s+not\s+(say|output|write|respond|print)/,
+    /\bwouldn'?t\s+(say|output|write|respond|print)/,
+    /\bavoid\s+(saying|outputting|writing)/,
+    /\bwithout\s+(saying|outputting|writing)/,
+    /\bbefore\s+(saying|outputting|I\s+say)/,
+    /\buntil\s+(I\s+)?(say|output|can\s+say)/,
+  ];
+
+  let lastMatchEndIndex = 0;
 
   for (const match of matches) {
-    const matchIndex = output.indexOf(match);
-    const contextBefore = output.substring(Math.max(0, matchIndex - 100), matchIndex).toLowerCase();
-
-    const negationPatterns = [
-      /\bnot\s+(yet\s+)?(say|output|write|respond|print)/,
-      /\bdon'?t\s+(say|output|write|respond|print)/,
-      /\bwon'?t\s+(say|output|write|respond|print)/,
-      /\bwill\s+not\s+(say|output|write|respond|print)/,
-      /\bshould\s+not\s+(say|output|write|respond|print)/,
-      /\bwouldn'?t\s+(say|output|write|respond|print)/,
-      /\bavoid\s+(saying|outputting|writing)/,
-      /\bwithout\s+(saying|outputting|writing)/,
-      /\bbefore\s+(saying|outputting|I\s+say)/,
-      /\buntil\s+(I\s+)?(say|output|can\s+say)/,
-    ];
+    const matchIndex = match.index!;
+    const matchEndIndex = matchIndex + match[0].length;
+    
+    // Context should start after the previous match (if any) to avoid
+    // including negations from earlier in the text
+    const contextStart = Math.max(lastMatchEndIndex, matchIndex - 100);
+    const contextBefore = output.substring(contextStart, matchIndex).toLowerCase();
 
     const hasNegation = negationPatterns.some(pattern => pattern.test(contextBefore));
-    if (hasNegation) continue;
+    if (hasNegation) {
+      lastMatchEndIndex = matchEndIndex;
+      continue;
+    }
 
-    const quotesBefore = (contextBefore.match(/["'`]/g) || []).length;
+    // Count quotes from start of string up to match position.
+    // Only count quotes that appear at word boundaries (not contractions like Here's, don't)
+    const fullTextBefore = output.substring(0, matchIndex);
+    // Match quotes that are: at start of string, after whitespace, or before whitespace/end
+    // This excludes apostrophes in the middle of words (contractions)
+    const quotesBefore = (fullTextBefore.match(/(^|\s)["'`]|["'`](\s|$)/g) || []).length;
     if (quotesBefore % 2 === 1) continue;
 
     return true;

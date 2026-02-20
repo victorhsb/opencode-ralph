@@ -14127,7 +14127,8 @@ var init_state = __esm(() => {
     filesModified: exports_external.array(exports_external.string()),
     exitCode: exports_external.number(),
     completionDetected: exports_external.boolean(),
-    errors: exports_external.array(exports_external.string())
+    errors: exports_external.array(exports_external.string()),
+    structuredOutputUsed: exports_external.boolean().optional()
   });
   RalphHistorySchema = exports_external.object({
     iterations: exports_external.array(IterationHistorySchema),
@@ -14508,28 +14509,34 @@ Iteration Summary`);
 function checkCompletion(output, promise2) {
   const escapedPromise = escapeRegex2(promise2);
   const promisePattern = new RegExp(`<promise>\\s*${escapedPromise}\\s*</promise>`, "gi");
-  const matches = output.match(promisePattern);
-  if (!matches)
+  const matches = Array.from(output.matchAll(promisePattern));
+  if (matches.length === 0)
     return false;
+  const negationPatterns = [
+    /\bnot\s+(yet\s+)?(say|output|write|respond|print)/,
+    /\bdon'?t\s+(say|output|write|respond|print)/,
+    /\bwon'?t\s+(say|output|write|respond|print)/,
+    /\bwill\s+not\s+(say|output|write|respond|print)/,
+    /\bshould\s+not\s+(say|output|write|respond|print)/,
+    /\bwouldn'?t\s+(say|output|write|respond|print)/,
+    /\bavoid\s+(saying|outputting|writing)/,
+    /\bwithout\s+(saying|outputting|writing)/,
+    /\bbefore\s+(saying|outputting|I\s+say)/,
+    /\buntil\s+(I\s+)?(say|output|can\s+say)/
+  ];
+  let lastMatchEndIndex = 0;
   for (const match of matches) {
-    const matchIndex = output.indexOf(match);
-    const contextBefore = output.substring(Math.max(0, matchIndex - 100), matchIndex).toLowerCase();
-    const negationPatterns = [
-      /\bnot\s+(yet\s+)?(say|output|write|respond|print)/,
-      /\bdon'?t\s+(say|output|write|respond|print)/,
-      /\bwon'?t\s+(say|output|write|respond|print)/,
-      /\bwill\s+not\s+(say|output|write|respond|print)/,
-      /\bshould\s+not\s+(say|output|write|respond|print)/,
-      /\bwouldn'?t\s+(say|output|write|respond|print)/,
-      /\bavoid\s+(saying|outputting|writing)/,
-      /\bwithout\s+(saying|outputting|writing)/,
-      /\bbefore\s+(saying|outputting|I\s+say)/,
-      /\buntil\s+(I\s+)?(say|output|can\s+say)/
-    ];
+    const matchIndex = match.index;
+    const matchEndIndex = matchIndex + match[0].length;
+    const contextStart = Math.max(lastMatchEndIndex, matchIndex - 100);
+    const contextBefore = output.substring(contextStart, matchIndex).toLowerCase();
     const hasNegation = negationPatterns.some((pattern) => pattern.test(contextBefore));
-    if (hasNegation)
+    if (hasNegation) {
+      lastMatchEndIndex = matchEndIndex;
       continue;
-    const quotesBefore = (contextBefore.match(/["'`]/g) || []).length;
+    }
+    const fullTextBefore = output.substring(0, matchIndex);
+    const quotesBefore = (fullTextBefore.match(/(^|\s)["'`]|["'`](\s|$)/g) || []).length;
     if (quotesBefore % 2 === 1)
       continue;
     return true;
@@ -14571,7 +14578,7 @@ __export(exports_executor, {
   executePrompt: () => executePrompt
 });
 async function executePrompt(options) {
-  const { client: client3, prompt, model, agent, onEvent, signal } = options;
+  const { client: client3, prompt, model, agent, onEvent, signal, useStructuredOutput, format } = options;
   const toolCounts = new Map;
   const errors3 = [];
   let output = "";
@@ -14622,13 +14629,17 @@ async function executePrompt(options) {
       providerID: model.split("/")[0] || "openai",
       modelID: model.split("/")[1] || model
     } : undefined;
+    const requestBody = {
+      model: modelConfig,
+      agent,
+      parts: [{ type: "text", text: prompt }]
+    };
+    if (useStructuredOutput) {
+      requestBody.format = format ?? DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
+    }
     const promptResponse = await client3.session.prompt({
       path: { id: sessionId },
-      body: {
-        model: modelConfig,
-        agent,
-        parts: [{ type: "text", text: prompt }]
-      }
+      body: requestBody
     });
     if (promptResponse.error) {
       errors3.push(`Prompt failed: ${promptResponse.error}`);
@@ -14668,12 +14679,14 @@ async function executePrompt(options) {
       abortHandler();
     }
     const finalOutput = extractOutputFromMessage(result);
+    const structuredOutput = useStructuredOutput ? extractStructuredOutput(result) : undefined;
     return {
       output: finalOutput || output,
       toolCounts,
       errors: errors3,
       success: true,
-      exitCode: 0
+      exitCode: 0,
+      structuredOutput
     };
   } catch (error48) {
     const errorMessage = error48 instanceof Error ? error48.message : String(error48);
@@ -14829,6 +14842,49 @@ function extractOutputFromMessage(message) {
   return output.join(`
 `);
 }
+function extractStructuredOutput(message) {
+  if (!message || typeof message !== "object") {
+    return;
+  }
+  const msg = message;
+  const info = msg.info;
+  if (!info) {
+    return;
+  }
+  const structuredOutput = info.structured_output;
+  if (!structuredOutput || typeof structuredOutput !== "object") {
+    return;
+  }
+  const so = structuredOutput;
+  if (typeof so.completed !== "boolean") {
+    return;
+  }
+  const result = {
+    completed: so.completed
+  };
+  if (typeof so.reasoning === "string") {
+    result.reasoning = so.reasoning;
+  }
+  if (typeof so.output === "string") {
+    result.output = so.output;
+  }
+  return result;
+}
+var DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
+var init_executor = __esm(() => {
+  DEFAULT_STRUCTURED_OUTPUT_SCHEMA = {
+    type: "json_schema",
+    schema: {
+      type: "object",
+      properties: {
+        completed: { type: "boolean", description: "Whether the task is complete" },
+        reasoning: { type: "string", description: "Brief explanation of completion status" },
+        output: { type: "string", description: "The actual output text" }
+      },
+      required: ["completed"]
+    }
+  };
+});
 
 // src/supervisor/supervisor.ts
 var exports_supervisor = {};
@@ -15115,7 +15171,7 @@ function parseSupervisorOutput(output, noActionPromise, suggestionPromise, itera
 async function runSupervisorOnce(state, supervisorConfig, history, coderOutput, sdkClient) {
   try {
     const supervisorPrompt = buildSupervisorPrompt(state, supervisorConfig, coderOutput, history);
-    const { executePrompt: executePrompt2 } = __toCommonJS(exports_executor);
+    const { executePrompt: executePrompt2 } = (init_executor(), __toCommonJS(exports_executor));
     const result = await executePrompt2({
       client: sdkClient.client,
       prompt: supervisorPrompt,
@@ -16637,11 +16693,22 @@ ${contextSection}${tasksSection}
 
 ${state.prompt}
 
+## Output Format
+
+Your response will be parsed as structured JSON with these fields:
+- "completed": Set to true ONLY when the task is genuinely complete
+- "reasoning": Briefly explain why the task is or isn't complete
+- "output": Your actual response text
+
+The system will check the "completed" field to detect task completion.
+
 ## Critical Rules
 
 - Work on ONE task at a time from .ralph/ralph-tasks.md
-- ONLY output <promise>${state.taskPromise}</promise> when the current task is complete and marked in ralph-tasks.md
-- ONLY output <promise>${state.completionPromise}</promise> when ALL tasks are truly done
+- Set "completed" to true ONLY when the current task is complete and marked in ralph-tasks.md (or ALL tasks are done for final completion)
+- Provide brief reasoning in the "reasoning" field about completion status
+- Put your main response text in the "output" field
+- The old <promise> tag format is now OPTIONAL: <promise>${state.taskPromise}</promise> for task completion, <promise>${state.completionPromise}</promise> for ALL tasks done
 - Output promise tags DIRECTLY - do not quote them, explain them, or say you "will" output them
 - Do NOT lie or output false promises to exit the loop
 - If stuck, try a different approach
@@ -16663,19 +16730,30 @@ ${contextSection}
 
 ${state.prompt}
 
+## Output Format
+
+Your response will be parsed as structured JSON with these fields:
+- "completed": Set to true ONLY when the task is genuinely complete
+- "reasoning": Briefly explain why the task is or isn't complete
+- "output": Your actual response text
+
+The system will check the "completed" field to detect task completion.
+
 ## Instructions
 
 1. Read the current state of files to understand what's been done
 2. Track your progress and plan remaining work
 3. Make progress on the task
 4. Run tests/verification if applicable
-5. When the task is GENUINELY COMPLETE, output:
-   <promise>${state.completionPromise}</promise>
+5. When the task is GENUINELY COMPLETE, set "completed" to true
 
 ## Critical Rules
 
-- ONLY output <promise>${state.completionPromise}</promise> when the task is truly done
-- Output the promise tag DIRECTLY - do not quote it, explain it, or say you "will" output it
+- Set "completed" to true ONLY when the task is truly done
+- Provide brief reasoning in the "reasoning" field about completion status
+- Put your main response text in the "output" field
+- The old <promise> tag format is now OPTIONAL: <promise>${state.completionPromise}</promise>
+- Output promise tags DIRECTLY - do not quote them, explain it, or say you "will" output it
 - Do NOT lie or output false promises to exit the loop
 - If stuck, try a different approach
 - Check your work before claiming completion
@@ -16730,6 +16808,10 @@ function getModifiedFilesSinceSnapshot(before, after) {
   }
   return changedFiles;
 }
+
+// src/loop/iteration.ts
+init_executor();
+
 // src/sdk/output.ts
 function formatToolResult(toolName, result) {
   const lines = [];
@@ -16762,7 +16844,7 @@ function formatToolResult(toolName, result) {
 
 // src/loop/iteration.ts
 async function executeSdkIteration(options) {
-  const { client: client3, prompt, model, agent, streamOutput, compactTools, silent } = options;
+  const { client: client3, prompt, model, agent, streamOutput, compactTools, silent, useStructuredOutput } = options;
   const toolCounts = new Map;
   const errors3 = [];
   let output = "";
@@ -16797,6 +16879,7 @@ async function executeSdkIteration(options) {
       prompt,
       model,
       agent,
+      useStructuredOutput,
       onEvent: (event) => {
         if (event.type === "tool_start" && event.toolName) {
           toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
@@ -16840,7 +16923,8 @@ async function executeSdkIteration(options) {
       output,
       toolCounts,
       exitCode: result.exitCode,
-      errors: errors3
+      errors: errors3,
+      structuredOutput: result.structuredOutput
     };
   } catch (error48) {
     clearInterval(heartbeatTimer);
@@ -16891,7 +16975,8 @@ async function runRalphLoop(options) {
     allowAllPermissions,
     silent,
     agent,
-    sdkClient
+    sdkClient,
+    useStructuredOutput = false
   } = options;
   const existingState = loadState();
   const resuming = !!existingState?.active;
@@ -17053,7 +17138,8 @@ Gracefully stopping Ralph loop...`);
         agent,
         streamOutput,
         compactTools: !verboseTools,
-        silent
+        silent,
+        useStructuredOutput: true
       });
       const result = sdkResult.output;
       const toolCounts = sdkResult.toolCounts;
@@ -17068,7 +17154,7 @@ Gracefully stopping Ralph loop...`);
       }
       const combinedOutput = `${result}
 ${stderr}`;
-      const completionDetected = checkCompletion(combinedOutput, completionPromise);
+      const completionDetected = sdkResult.structuredOutput?.completed === true || !sdkResult.structuredOutput && checkCompletion(combinedOutput, completionPromise);
       const abortDetected = abortPromise ? checkCompletion(combinedOutput, abortPromise) : false;
       const taskCompletionDetected = tasksMode ? checkCompletion(combinedOutput, taskPromise) : false;
       let shouldComplete = completionDetected;
@@ -17094,7 +17180,8 @@ ${stderr}`;
         filesModified,
         exitCode,
         completionDetected,
-        errors: errors3
+        errors: errors3,
+        structuredOutputUsed: !!sdkResult.structuredOutput
       };
       history.iterations.push(iterationRecord);
       history.totalDurationMs += iterationDuration;

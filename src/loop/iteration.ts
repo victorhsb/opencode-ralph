@@ -7,6 +7,7 @@
 import { executePrompt } from "../sdk/executor";
 import { formatToolResult } from "../sdk/output";
 import type { SdkClient } from "../sdk/client";
+import type { StructuredOutput } from "../sdk/executor";
 
 export interface SdkIterationOptions {
   client: SdkClient;
@@ -16,6 +17,7 @@ export interface SdkIterationOptions {
   streamOutput: boolean;
   compactTools: boolean;
   silent?: boolean;
+  useStructuredOutput?: boolean;
 }
 
 export interface SdkIterationResult {
@@ -23,10 +25,11 @@ export interface SdkIterationResult {
   toolCounts: Map<string, number>;
   exitCode: number;
   errors: string[];
+  structuredOutput?: StructuredOutput;
 }
 
 export async function executeSdkIteration(options: SdkIterationOptions): Promise<SdkIterationResult> {
-  const { client, prompt, model, agent, streamOutput, compactTools, silent } = options;
+  const { client, prompt, model, agent, streamOutput, compactTools, silent, useStructuredOutput } = options;
 
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
@@ -65,6 +68,7 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
       prompt,
       model,
       agent,
+      useStructuredOutput,
       onEvent: (event) => {
         if (event.type === "tool_start" && event.toolName) {
           toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
@@ -116,6 +120,7 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
       toolCounts,
       exitCode: result.exitCode,
       errors,
+      structuredOutput: result.structuredOutput,
     };
   } catch (error) {
     clearInterval(heartbeatTimer);

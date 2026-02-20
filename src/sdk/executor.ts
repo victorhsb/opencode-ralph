@@ -7,6 +7,15 @@
 
 import type { OpencodeClient } from "@opencode-ai/sdk";
 
+export interface StructuredOutput {
+  /** Whether the task is complete */
+  completed: boolean;
+  /** Brief explanation of completion status */
+  reasoning?: string;
+  /** The actual output text */
+  output?: string;
+}
+
 export interface ExecutionResult {
   /** The text output from the execution */
   output: string;
@@ -18,6 +27,8 @@ export interface ExecutionResult {
   success: boolean;
   /** Exit code (0 for success, non-zero for failure) */
   exitCode: number;
+  /** Structured output data when useStructuredOutput was enabled */
+  structuredOutput?: StructuredOutput;
 }
 
 export interface ExecutionOptions {
@@ -33,6 +44,24 @@ export interface ExecutionOptions {
   onEvent?: (event: SdkEvent) => void;
   /** Optional abort signal for cancellation */
   signal?: AbortSignal;
+  /** Whether to use structured output for reliable completion detection */
+  useStructuredOutput?: boolean;
+  /** JSON schema format for structured output (when useStructuredOutput is true) */
+  format?: StructuredOutputSchema;
+}
+
+/** JSON schema for structured output completion detection */
+export interface StructuredOutputSchema {
+  type: "json_schema";
+  schema: {
+    type: "object";
+    properties: {
+      completed: { type: "boolean"; description: string };
+      reasoning?: { type: "string"; description: string };
+      output?: { type: "string"; description: string };
+    };
+    required: ["completed"];
+  };
 }
 
 export interface SdkEvent {
@@ -53,6 +82,22 @@ export interface SdkEvent {
 }
 
 /**
+ * Default JSON schema for structured output completion detection.
+ */
+const DEFAULT_STRUCTURED_OUTPUT_SCHEMA: StructuredOutputSchema = {
+  type: "json_schema",
+  schema: {
+    type: "object",
+    properties: {
+      completed: { type: "boolean", description: "Whether the task is complete" },
+      reasoning: { type: "string", description: "Brief explanation of completion status" },
+      output: { type: "string", description: "The actual output text" }
+    },
+    required: ["completed"]
+  }
+};
+
+/**
  * Execute a prompt using the SDK with real-time event streaming.
  *
  * Flow:
@@ -67,7 +112,7 @@ export interface SdkEvent {
 export async function executePrompt(
   options: ExecutionOptions
 ): Promise<ExecutionResult> {
-  const { client, prompt, model, agent, onEvent, signal } = options;
+  const { client, prompt, model, agent, onEvent, signal, useStructuredOutput, format } = options;
 
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
@@ -148,13 +193,21 @@ export async function executePrompt(
         }
       : undefined;
 
+    // Prepare request body with optional structured output format
+    const requestBody: Record<string, unknown> = {
+      model: modelConfig,
+      agent: agent,
+      parts: [{ type: "text" as const, text: prompt }],
+    };
+
+    // Add structured output format if enabled
+    if (useStructuredOutput) {
+      requestBody.format = format ?? DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
+    }
+
     const promptResponse = await client.session.prompt({
       path: { id: sessionId },
-      body: {
-        model: modelConfig,
-        agent: agent,
-        parts: [{ type: "text" as const, text: prompt }],
-      },
+      body: requestBody,
     });
 
     if (promptResponse.error) {
@@ -204,12 +257,18 @@ export async function executePrompt(
     // Extract final output from result
     const finalOutput = extractOutputFromMessage(result);
 
+    // Extract structured output if enabled
+    const structuredOutput = useStructuredOutput
+      ? extractStructuredOutput(result)
+      : undefined;
+
     return {
       output: finalOutput || output,
       toolCounts,
       errors,
       success: true,
       exitCode: 0,
+      structuredOutput,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -441,4 +500,54 @@ function extractOutputFromMessage(
   }
 
   return output.join("\n");
+}
+
+/**
+ * Extract structured output from SDK message response.
+ *
+ * The structured output is typically found at result.data.info.structured_output
+ * when useStructuredOutput was enabled in the request.
+ */
+function extractStructuredOutput(
+  message: unknown
+): StructuredOutput | undefined {
+  if (!message || typeof message !== "object") {
+    return undefined;
+  }
+
+  const msg = message as Record<string, unknown>;
+
+  // Navigate through the response structure: info.structured_output
+  const info = msg.info as Record<string, unknown> | undefined;
+  if (!info) {
+    return undefined;
+  }
+
+  const structuredOutput = info.structured_output;
+  if (!structuredOutput || typeof structuredOutput !== "object") {
+    return undefined;
+  }
+
+  const so = structuredOutput as Record<string, unknown>;
+
+  // Validate the required 'completed' field
+  if (typeof so.completed !== "boolean") {
+    return undefined;
+  }
+
+  // Build the structured output object
+  const result: StructuredOutput = {
+    completed: so.completed,
+  };
+
+  // Add optional fields if present
+  if (typeof so.reasoning === "string") {
+    result.reasoning = so.reasoning;
+  }
+
+  if (typeof so.output === "string") {
+    result.output = so.output;
+  }
+
+  return result;
 }

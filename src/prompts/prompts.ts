@@ -73,11 +73,22 @@ ${contextSection}${tasksSection}
 
 ${state.prompt}
 
+## Output Format
+
+Your response will be parsed as structured JSON with these fields:
+- "completed": Set to true ONLY when the task is genuinely complete
+- "reasoning": Briefly explain why the task is or isn't complete
+- "output": Your actual response text
+
+The system will check the "completed" field to detect task completion.
+
 ## Critical Rules
 
 - Work on ONE task at a time from .ralph/ralph-tasks.md
-- ONLY output <promise>${state.taskPromise}</promise> when the current task is complete and marked in ralph-tasks.md
-- ONLY output <promise>${state.completionPromise}</promise> when ALL tasks are truly done
+- Set "completed" to true ONLY when the current task is complete and marked in ralph-tasks.md (or ALL tasks are done for final completion)
+- Provide brief reasoning in the "reasoning" field about completion status
+- Put your main response text in the "output" field
+- The old <promise> tag format is now OPTIONAL: <promise>${state.taskPromise}</promise> for task completion, <promise>${state.completionPromise}</promise> for ALL tasks done
 - Output promise tags DIRECTLY - do not quote them, explain them, or say you "will" output them
 - Do NOT lie or output false promises to exit the loop
 - If stuck, try a different approach
@@ -100,19 +111,30 @@ ${contextSection}
 
 ${state.prompt}
 
+## Output Format
+
+Your response will be parsed as structured JSON with these fields:
+- "completed": Set to true ONLY when the task is genuinely complete
+- "reasoning": Briefly explain why the task is or isn't complete
+- "output": Your actual response text
+
+The system will check the "completed" field to detect task completion.
+
 ## Instructions
 
 1. Read the current state of files to understand what's been done
 2. Track your progress and plan remaining work
 3. Make progress on the task
 4. Run tests/verification if applicable
-5. When the task is GENUINELY COMPLETE, output:
-   <promise>${state.completionPromise}</promise>
+5. When the task is GENUINELY COMPLETE, set "completed" to true
 
 ## Critical Rules
 
-- ONLY output <promise>${state.completionPromise}</promise> when the task is truly done
-- Output the promise tag DIRECTLY - do not quote it, explain it, or say you "will" output it
+- Set "completed" to true ONLY when the task is truly done
+- Provide brief reasoning in the "reasoning" field about completion status
+- Put your main response text in the "output" field
+- The old <promise> tag format is now OPTIONAL: <promise>${state.completionPromise}</promise>
+- Output promise tags DIRECTLY - do not quote them, explain it, or say you "will" output it
 - Do NOT lie or output false promises to exit the loop
 - If stuck, try a different approach
 - Check your work before claiming completion

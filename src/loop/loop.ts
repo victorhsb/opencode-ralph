@@ -55,6 +55,7 @@ import {
   getModifiedFilesSinceSnapshot,
 } from "../fs-tracker/fs-tracker";
 import { executeSdkIteration, type SdkIterationResult } from "./iteration";
+import type { StructuredOutput } from "../sdk/executor";
 
 export interface LoopOptions {
   prompt: string;
@@ -80,6 +81,8 @@ export interface LoopOptions {
   silent?: boolean;
   agent?: string;
   sdkClient: SdkClient;
+  /** Whether to use structured output for completion detection (default: false for backward compatibility) */
+  useStructuredOutput?: boolean;
 }
 
 export async function runRalphLoop(options: LoopOptions): Promise<void> {
@@ -106,6 +109,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     silent,
     agent,
     sdkClient,
+    useStructuredOutput = false,
   } = options;
 
   const existingState = loadState();
@@ -281,6 +285,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         streamOutput,
         compactTools: !verboseTools,
         silent,
+        useStructuredOutput: true,
       });
 
       const result = sdkResult.output;
@@ -296,7 +301,10 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
       }
 
       const combinedOutput = `${result}\n${stderr}`;
-      const completionDetected = checkCompletion(combinedOutput, completionPromise);
+
+      // Check structured output first (more reliable), then fall back to text parsing
+      const completionDetected = sdkResult.structuredOutput?.completed === true ||
+        (!sdkResult.structuredOutput && checkCompletion(combinedOutput, completionPromise));
       const abortDetected = abortPromise ? checkCompletion(combinedOutput, abortPromise) : false;
       const taskCompletionDetected = tasksMode ? checkCompletion(combinedOutput, taskPromise) : false;
       let shouldComplete = completionDetected;
@@ -327,6 +335,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         exitCode,
         completionDetected,
         errors,
+        structuredOutputUsed: !!sdkResult.structuredOutput,
       };
 
       history.iterations.push(iterationRecord);

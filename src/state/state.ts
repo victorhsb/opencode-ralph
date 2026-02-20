@@ -25,6 +25,7 @@ const IterationHistorySchema = z.object({
   exitCode: z.number(),
   completionDetected: z.boolean(),
   errors: z.array(z.string()),
+  structuredOutputUsed: z.boolean().optional(),
 });
 
 export type IterationHistory = z.infer<typeof IterationHistorySchema>;
