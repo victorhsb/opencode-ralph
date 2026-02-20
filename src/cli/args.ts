@@ -308,4 +308,9 @@ export const RALPH_ARGS_SCHEMA: ArgConfig[] = [
     type: "boolean",
     description: "Suppress tool execution details and other descriptive output",
   },
+  {
+    name: "dry-run",
+    type: "boolean",
+    description: "Print the prompt that would be sent and exit without running",
+  },
 ];

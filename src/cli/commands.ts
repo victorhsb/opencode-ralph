@@ -45,7 +45,7 @@ export function handleStatusCommand(args: string[]): void {
 
   console.log(`
 ╔══════════════════════════════════════════════════════════════════╗
-║                    Ralph Wiggum Status                           ║
+║                    Opencode Ralph Status                         ║
 ╚══════════════════════════════════════════════════════════════════╝
 `);
 

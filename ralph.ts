@@ -10,10 +10,12 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 import { createSdkClient, type SdkClient } from "./src/sdk/client";
+import type { RalphState } from "./src/state/state";
 import { runRalphLoop } from "./src/loop/loop";
 import { readPromptFile } from "./src/io/files";
 
 import { displayHelp, parseArgs, RALPH_ARGS_SCHEMA } from "./src/cli/args";
+import { buildPrompt } from "./src/prompts/prompts";
 
 import {
   handleStatusCommand,
@@ -121,6 +123,7 @@ const disablePlugins = parsed.args["no-plugins"] as boolean;
 const allowAll = parsed.args["allow-all"] as boolean;
 const noAllowAll = parsed.args["no-allow-all"] as boolean;
 const silent = parsed.args.silent as boolean;
+const dryRun = parsed.args["dry-run"] as boolean;
 
 const autoCommit = !noCommit;
 const streamOutput = !noStream;
@@ -150,6 +153,41 @@ if (!prompt) {
 if (maxIterations > 0 && minIterations > maxIterations) {
   console.error(`Error: --min-iterations (${minIterations}) cannot be greater than --max-iterations (${maxIterations})`);
   process.exit(1);
+}
+
+if (dryRun) {
+  const state: RalphState = {
+    version: 1,
+    active: false,
+    iteration: 1,
+    minIterations,
+    maxIterations,
+    completionPromise,
+    abortPromise: abortPromise || undefined,
+    tasksMode,
+    taskPromise,
+    prompt,
+    promptTemplate: promptTemplatePath || undefined,
+    startedAt: new Date().toISOString(),
+    model,
+    supervisor: {
+      enabled: supervisorEnabled,
+      model: supervisorModel,
+      noActionPromise: supervisorNoActionPromise,
+      suggestionPromise: supervisorSuggestionPromise,
+      memoryLimit: supervisorMemoryLimit,
+      promptTemplate: supervisorPromptTemplatePath || undefined,
+    },
+    supervisorState: {
+      enabled: supervisorEnabled,
+      pausedForDecision: false,
+    },
+  };
+  const fullPrompt = buildPrompt(state, promptTemplatePath || undefined);
+  console.log("=== PROMPT THAT WOULD BE SENT ===");
+  console.log(fullPrompt);
+  console.log("\n=== END OF PROMPT ===");
+  process.exit(0);
 }
 
 async function main(): Promise<void> {

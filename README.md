@@ -44,7 +44,7 @@ Open Ralph Wiggum works exclusively with **OpenCode** using the official SDK.
 
 | Platform | Requirement |
 |----------|-------------|
-| **OpenCode** | SDK v1.0.0+ (bundled) |
+| **OpenCode** | SDK v0.15.0+ (pinned to 0.15.x range) |
 
 ---
 

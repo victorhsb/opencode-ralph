@@ -131,6 +131,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
 `);
 
   const state: RalphState = resuming && existingState ? existingState : {
+    version: 1,
     active: true,
     iteration: 1,
     minIterations,
