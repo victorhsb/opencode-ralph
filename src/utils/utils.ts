@@ -152,20 +152,21 @@ export function stripAnsi(input: string): string {
 }
 
 export function detectPlaceholderPluginError(output: string): boolean {
-  return output.includes("ralph-wiggum is not yet ready for use. This is a placeholder package.");
+  return output.includes("ralph-wiggum is not yet ready for use");
 }
 
 export function detectModelNotFoundError(output: string): boolean {
-  return output.includes("ProviderModelNotFoundError") ||
-         output.includes("Provider returned error") ||
-         output.includes("model not found") ||
-         output.includes("No model configured");
+  const lowerOutput = output.toLowerCase();
+  return lowerOutput.includes("providermodelnotfound") ||
+         lowerOutput.includes("provider returned error") ||
+         lowerOutput.includes("model not found") ||
+         lowerOutput.includes("no model configured");
 }
 
 export function isSdkError(error: unknown): boolean {
   if (error instanceof Error) {
     const msg = error.message.toLowerCase();
-    if (msg.includes("providermodelfound") ||
+    if (msg.includes("providermodelnotfound") ||
         msg.includes("model not found") ||
         msg.includes("provider returned error") ||
         msg.includes("invalid model") ||
@@ -227,7 +228,7 @@ export function getSdkErrorMessage(error: unknown): string {
 
 export function detectSdkModelNotFoundError(output: string): boolean {
   const lowerOutput = output.toLowerCase();
-  return lowerOutput.includes("providermodelfound") ||
+  return lowerOutput.includes("providermodelnotfound") ||
          lowerOutput.includes("model not found") ||
          lowerOutput.includes("provider returned error") ||
          lowerOutput.includes("no model configured");

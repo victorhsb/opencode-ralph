@@ -656,8 +656,8 @@ describe("getSdkErrorMessage", () => {
 });
 
 describe("detectSdkModelNotFoundError", () => {
-  test("detects providermodelfound", () => {
-    const output = "Error: providermodelfound: Invalid model";
+  test("detects providermodelnotfound", () => {
+    const output = "Error: providermodelnotfound: Invalid model";
     expect(detectSdkModelNotFoundError(output)).toBe(true);
   });
 
@@ -677,7 +677,7 @@ describe("detectSdkModelNotFoundError", () => {
   });
 
   test("case insensitive", () => {
-    const output = "PROVIDERMODEFOUND ERROR";
+    const output = "PROVIDERMODELNOTFOUND ERROR";
     expect(detectSdkModelNotFoundError(output)).toBe(true);
   });
 
