@@ -58,12 +58,9 @@ export function parseArgs<T extends Record<string, unknown>>(
   const promptParts: string[] = [];
   const errors: string[] = [];
 
-  const doubleDashIndex = argList.indexOf("--");
-  const argsToProcess = doubleDashIndex !== -1 ? argList.slice(0, doubleDashIndex) : argList;
-
   let i = 0;
-  while (i < argsToProcess.length) {
-    const arg = argsToProcess[i];
+  while (i < argList.length) {
+    const arg = argList[i];
 
     if (arg && !arg.startsWith("-")) {
       promptParts.push(arg);
@@ -84,7 +81,7 @@ export function parseArgs<T extends Record<string, unknown>>(
       args[key] = true as T[keyof T];
       i++;
     } else {
-      const nextArg = argsToProcess[i + 1];
+      const nextArg = argList[i + 1];
       if (!nextArg) {
         errors.push(`Option ${arg} requires a value`);
         i++;

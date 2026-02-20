@@ -79,5 +79,4 @@ node_modules/
 .ralph/
 
 # Build artifacts
-bin/*
-!bin/ralph.js
+bin

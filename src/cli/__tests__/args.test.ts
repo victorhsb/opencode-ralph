@@ -173,33 +173,6 @@ describe("parseArgs", () => {
     expect(result.errors).toContain("must be at most 100");
   });
 
-  test("handles -- as prompt separator", () => {
-    const schema: ArgConfig[] = [
-      { name: "model", type: "string" },
-    ];
-
-    const result = parseArgs<TestArgs>(
-      ["--model", "test", "--", "this", "is", "the", "prompt"],
-      schema
-    );
-
-    expect(result.args.model).toBe("test");
-    expect(result.promptParts).toEqual([]);
-    expect(result.errors).toHaveLength(0);
-  });
-
-  test("handles options after -- as prompt parts", () => {
-    const schema: ArgConfig[] = [
-      { name: "model", type: "string" },
-    ];
-
-    const result = parseArgs<TestArgs>(["--model", "test", "--", "--another-flag"], schema);
-
-    expect(result.args.model).toBe("test");
-    expect(result.promptParts).toEqual([]);
-    expect(result.errors).toHaveLength(0);
-  });
-
   test("parses boolean 1 as true", () => {
     const schema: ArgConfig[] = [
       { name: "tasks", type: "boolean" },
