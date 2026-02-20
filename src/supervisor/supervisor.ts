@@ -373,13 +373,16 @@ async function runSupervisorOnce(
     const supervisorPrompt = buildSupervisorPrompt(state, supervisorConfig, coderOutput, history);
 
     const { executePrompt } = require("../sdk/executor");
-    const result = await executePrompt({
-      client: sdkClient.client,
-      prompt: supervisorPrompt,
-      model: supervisorConfig.model,
-      onEvent: (event: any) => {
+    const result = await executePrompt(
+      sdkClient.client,
+      supervisorPrompt,
+      supervisorConfig.model ?? undefined,
+      undefined,
+      {
+        onEvent: (event: any) => {
+        },
       },
-    });
+    );
 
     if (!result.success) {
       return {

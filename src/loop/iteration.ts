@@ -12,7 +12,7 @@ import type { StructuredOutput } from "../sdk/executor";
 export interface SdkIterationOptions {
   client: SdkClient;
   prompt: string;
-  model?: string;
+  model: string | null;
   agent?: string;
   streamOutput: boolean;
   compactTools: boolean;
@@ -63,13 +63,13 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
   }, heartbeatIntervalMs);
 
   try {
-    const result = await executePrompt({
-      client: client.client,
+    const result = await executePrompt(
+      client.client,
       prompt,
-      model,
+      model ?? undefined,
       agent,
-      useStructuredOutput,
-      onEvent: (event) => {
+      {
+        onEvent: (event) => {
         if (event.type === "tool_start" && event.toolName) {
           toolCounts.set(event.toolName, (toolCounts.get(event.toolName) ?? 0) + 1);
           if (!silent && streamOutput) {

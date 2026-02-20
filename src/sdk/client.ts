@@ -5,8 +5,8 @@
  * Maps Ralph options to OpenCode SDK configuration.
  */
 
-import { createOpencode } from "@opencode-ai/sdk";
-import type { Config } from "@opencode-ai/sdk";
+import { createOpencode } from "@opencode-ai/sdk/v2";
+import type { Config } from "@opencode-ai/sdk/v2";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { createServer } from "net";
@@ -92,10 +92,13 @@ function parseFakePromptPartsFromEnv(defaultOutput: string): Array<{ type: "text
           (part as Record<string, unknown>).type === "text" &&
           typeof (part as Record<string, unknown>).text === "string"
         ) {
-          parts.push({
-            type: "text",
-            text: (part as Record<string, string>).text,
-          });
+          const text = (part as Record<string, string>).text;
+          if (text !== undefined) {
+            parts.push({
+              type: "text",
+              text,
+            });
+          }
         }
       }
       if (parts.length > 0) {
@@ -250,9 +253,10 @@ export async function createSdkClient(options: SdkClientOptions): Promise<SdkCli
   const requestedPort = options.port ?? 4096;
   const port = await findAvailablePort(hostname, requestedPort);
 
-  const config: Config = {
-    model: options.model,
-  };
+  const config: Config = {};
+  if (options.model !== undefined) {
+    config.model = options.model;
+  }
 
   // Map permissions
   if (options.allowAllPermissions) {
