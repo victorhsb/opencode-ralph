@@ -73,7 +73,6 @@ export interface LoopOptions {
   taskPromise: string;
   streamOutput: boolean;
   verboseTools: boolean;
-  autoCommit: boolean;
   disablePlugins: boolean;
   allowAllPermissions: boolean;
   silent?: boolean;
@@ -102,7 +101,6 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     taskPromise,
     streamOutput,
     verboseTools,
-    autoCommit,
     allowAllPermissions,
     silent,
     agent,
@@ -522,17 +520,6 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
       if (contextAtStart) {
         console.log(`📝 Context was consumed this iteration`);
         clearContextInternal();
-      }
-
-      if (autoCommit) {
-        try {
-          const status = await $`git status --porcelain`.text();
-          if (status.trim()) {
-            await $`git add -A`;
-            await $`git commit -m "Ralph iteration ${state.iteration}: work in progress"`.quiet();
-            console.log(`📝 Auto-committed changes`);
-          }
-        } catch { }
       }
 
       state.iteration++;

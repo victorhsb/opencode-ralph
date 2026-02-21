@@ -54,7 +54,6 @@ function configureProgram(program: Command): Command {
     .option("--prompt-template <path>", "Use custom prompt template (supports variables)")
     .option("-n, --no-stream", "Buffer output and print at the end")
     .option("--verbose-tools", "Print every tool line (disable compact tool summary)")
-    .option("--no-commit", "Don't auto-commit after each iteration")
     .option("--no-plugins", "Disable non-auth OpenCode plugins for this run")
     .option("--allow-all", "Auto-approve all tool permissions")
     .option("--no-allow-all", "Require interactive permission prompts")

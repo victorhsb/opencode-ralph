@@ -38,7 +38,6 @@ export interface MainCommandOptions {
   promptTemplate?: string;
   stream: boolean;
   verboseTools: boolean;
-  commit: boolean;
   plugins: boolean;
   allowAll: boolean;
   allowAllExplicit: boolean;
@@ -213,7 +212,6 @@ async function executeMainWorkflow(opts: MainCommandOptions, prompt: string): Pr
       taskPromise: opts.taskPromise,
       streamOutput: opts.stream,
       verboseTools: opts.verboseTools,
-      autoCommit: opts.commit,
       disablePlugins: !opts.plugins,
       allowAllPermissions,
       silent: opts.silent,
