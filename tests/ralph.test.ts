@@ -120,7 +120,7 @@ describe("supervisor cli", () => {
 
     const res = runRalphSync(
       cwd,
-      ["-p", "Simple task", "-x", "1", "--no-commit"],
+      ["-p", "Simple task", "-x", "1"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -154,7 +154,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["-p", "Simple task", "-x", "1", "--no-commit"],
+      ["-p", "Simple task", "-x", "1"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -180,7 +180,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["-p", "Simple task", "-x", "1", "--no-commit", "--verbose-tools"],
+      ["-p", "Simple task", "-x", "1", "--verbose-tools"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -211,7 +211,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["-p", "Simple task", "-x", "1", "--no-commit", "-n"],
+      ["-p", "Simple task", "-x", "1", "-n"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -244,7 +244,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["-p", "Simple task", "-x", "1", "--no-commit"],
+      ["-p", "Simple task", "-x", "1"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -289,7 +289,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["-p", "Simple task", "-x", "1", "--no-commit"],
+      ["-p", "Simple task", "-x", "1"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
@@ -329,7 +329,7 @@ describe("streamed CLI output", () => {
 
     const res = runRalphSync(
       cwd,
-      ["-p", "Simple task", "-x", "1", "--no-commit", "--silent"],
+      ["-p", "Simple task", "-x", "1", "--silent"],
       fakeSdkEnv({
         RALPH_FAKE_EVENTS_JSON: JSON.stringify(events),
       }),
