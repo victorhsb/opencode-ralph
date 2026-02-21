@@ -75,6 +75,16 @@ function parseFakeEventsFromEnv(): unknown[] {
   return [{ type: "session.idle" }];
 }
 
+/**
+ * Parse RALPH_FAKE_OUTPUT_PARTS_JSON and produce an array of text parts for a fake prompt.
+ *
+ * Attempts to parse the RALPH_FAKE_OUTPUT_PARTS_JSON environment variable as JSON and extract objects
+ * with a `type` of `"text"` and a string `text` field. If the environment variable is missing,
+ * empty, invalid JSON, or yields no valid parts, returns a single text part containing `defaultOutput`.
+ *
+ * @param defaultOutput - Fallback text used when no valid parts are found
+ * @returns An array of `{ type: "text"; text: string }` parts derived from the environment or a single part with `defaultOutput`
+ */
 function parseFakePromptPartsFromEnv(defaultOutput: string): Array<{ type: "text"; text: string }> {
   const raw = process.env.RALPH_FAKE_OUTPUT_PARTS_JSON;
   if (!raw?.trim()) {
@@ -201,12 +211,16 @@ async function findAvailablePort(hostname: string, preferredPort: number): Promi
 }
 
 /**
- * Create SDK client with configuration.
+ * Initialize and return an OpenCode SDK client and its server configured from Ralph options.
  *
- * Maps Ralph options to OpenCode SDK configuration:
- * - model: SDK config.model
- * - allowAllPermissions: SDK config.permission (all set to "allow")
- * - filterPlugins: SDK config.plugin (filter to auth-only)
+ * Maps relevant options from `options` into the SDK config:
+ * - `model` sets the SDK model.
+ * - `allowAllPermissions` grants broad "allow" permissions for I/O and external actions.
+ * - `filterPlugins` loads existing plugin lists and limits `config.plugin` to auth-related plugins.
+ * When the environment variable `RALPH_FAKE_SDK` is `"1"`, returns a synthetic client and a noop server driven by `RALPH_FAKE_EVENTS_JSON` and `RALPH_FAKE_OUTPUT_PARTS_JSON`.
+ *
+ * @param options - Options that influence SDK initialization and server binding (hostname and port).
+ * @returns An object with `client` (the initialized SDK client) and `server` (the server URL and a `close` cleanup function).
  */
 export async function createSdkClient(options: SdkClientOptions): Promise<SdkClient> {
   if (process.env.RALPH_FAKE_SDK === "1") {

@@ -88,16 +88,15 @@ const DEFAULT_STRUCTURED_OUTPUT_SCHEMA: StructuredOutputSchema = {
 };
 
 /**
- * Execute a prompt using the SDK with real-time event streaming.
+ * Execute a prompt in a fresh session, stream SDK events in real time, and aggregate the final output, tool usage counts, errors, and optional structured output.
  *
- * Flow:
- * 1. Create fresh session
- * 2. Subscribe to events
- * 3. Send prompt
- * 4. Collect response and tool usage
- * 5. Return structured result
- *
- * Each call creates a new session (no persistence across calls).
+ * @param client - Opencode SDK client used to create the session, subscribe to events, and send the prompt
+ * @param prompt - The text prompt to send as a single text part
+ * @param model - Optional model identifier in the form "provider/model" (e.g., "openai/gpt-4"); when provided, it is parsed into a model config
+ * @param agent - Optional agent identifier to run the prompt with
+ * @param options - Execution options; supports `onEvent` callback for real-time SdkEvent delivery, `signal` for aborting, and `format` to specify a structured output schema
+ * @returns The aggregated ExecutionResult containing the chosen output (structured or accumulated streaming text), a map of tool invocation counts, any captured errors, success flag, exit code, and optional structured output
+ * @throws Error if `model` is provided but does not match the expected "<provider>/<model>" format
  */
 export async function executePrompt(
   client: OpencodeClient,    // opencode sdk client
@@ -277,13 +276,10 @@ export async function executePrompt(
 }
 
 /**
- * Parse SDK event into internal event format.
+ * Converts an OpenCode SDK event payload into the internal SdkEvent format.
  *
- * Handles OpenCode SDK event types:
- * - message.part.delta: Streaming text chunks (properties.delta)
- * - message.part.updated: Complete message parts (properties.part)
- * - session.error: Error events
- * - session.idle: Completion indicator
+ * @param event - Raw SDK event payload to parse
+ * @returns An SdkEvent representing the parsed event; when the payload is missing or unrecognized, returns a text event with empty content and a current timestamp
  */
 function parseSdkEvent(event: unknown): SdkEvent {
   const timestamp = Date.now();
