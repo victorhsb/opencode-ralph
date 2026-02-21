@@ -362,6 +362,21 @@ export function parseSupervisorOutput(
   }
 }
 
+/**
+ * Builds the supervisor prompt, executes it once via the SDK, and interprets the model output into a SupervisorRunResult.
+ *
+ * @param state - Current agent state (includes iteration and runtime context)
+ * @param supervisorConfig - Supervisor configuration (model choice, promise markers for no-action and suggestions, etc.)
+ * @param history - Interaction history to include in the prompt
+ * @param coderOutput - Coder output to include in the supervisor prompt
+ * @param sdkClient - SDK client used to execute the prompt
+ * @returns A SupervisorRunResult describing the outcome:
+ * - `ok`: `true` if the supervisor output was successfully parsed into a result, `false` on failure.
+ * - `noAction`: `true` if the supervisor explicitly signaled that no action is required.
+ * - `suggestion`: present when a valid supervisor suggestion was parsed.
+ * - `rawOutput`: the raw text returned by the model.
+ * - `error`: an error message when `ok` is `false`.
+ */
 async function runSupervisorOnce(
   state: RalphState,
   supervisorConfig: SupervisorConfig,

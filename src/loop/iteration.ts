@@ -28,6 +28,12 @@ export interface SdkIterationResult {
   structuredOutput?: StructuredOutput;
 }
 
+/**
+ * Execute a single iteration using the provided SDK client and prompt, streaming progress and collecting outputs, tool usage counts, errors, and optional structured output.
+ *
+ * @param options - Configuration for the iteration, including the SDK client, prompt, model, agent, streaming and formatting flags
+ * @returns The iteration result containing the combined output, a map of per-tool usage counts, the process exit code, any errors encountered, and optional structured output
+ */
 export async function executeSdkIteration(options: SdkIterationOptions): Promise<SdkIterationResult> {
   const { client, prompt, model, agent, streamOutput, compactTools, silent, useStructuredOutput } = options;
 
