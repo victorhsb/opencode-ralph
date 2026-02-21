@@ -44,7 +44,7 @@ Open Ralph Wiggum works exclusively with **OpenCode** using the official SDK.
 
 | Platform | Requirement |
 |----------|-------------|
-| **OpenCode** | SDK v0.15.0+ (pinned to 0.15.x range) |
+| **OpenCode** | SDK v1.20.10+ |
 
 ---
 
@@ -259,7 +259,6 @@ Options:
   --no-stream              Buffer output and print at the end
   --verbose-tools          Print every tool line (disable compact tool summary)
   --no-plugins             Disable non-auth plugins
-  --no-commit              Don't auto-commit after iterations
   --allow-all              Auto-approve all permissions (default: on)
   --no-allow-all           Require interactive permission prompts
   --help                   Show help

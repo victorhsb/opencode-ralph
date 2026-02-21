@@ -5,7 +5,7 @@ MODE="${1:-compact}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-COMMON_ARGS=("Smoke test tool rendering" "--max-iterations" "1" "--no-commit")
+COMMON_ARGS=("Smoke test tool rendering" "--max-iterations" "1")
 
 FAKE_EVENTS='[
   {"type":"message.part.delta","properties":{"field":"text","delta":"[thinking] planning changes\n"}},
