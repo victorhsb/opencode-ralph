@@ -61,45 +61,16 @@ describe("Structured Output Integration", () => {
   });
 
   describe("ExecutionOptions interface", () => {
-    test("accepts useStructuredOutput flag", () => {
+    test("accepts format schema", () => {
       const options: Partial<ExecutionOptions> = {
-        useStructuredOutput: true,
+        format: DEFAULT_STRUCTURED_OUTPUT_SCHEMA,
       };
-      expect(options.useStructuredOutput).toBe(true);
+      expect(options.format).toBe(DEFAULT_STRUCTURED_OUTPUT_SCHEMA);
     });
 
-    test("accepts custom format schema", () => {
-      const customSchema: StructuredOutputSchema = {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: {
-            completed: { type: "boolean", description: "Done" },
-          },
-          required: ["completed"],
-        },
-      };
-
-      const options: Partial<ExecutionOptions> = {
-        useStructuredOutput: true,
-        format: customSchema,
-      };
-
-      expect(options.format).toBe(customSchema);
-    });
-
-    test("format is optional when useStructuredOutput is true", () => {
-      const options: Partial<ExecutionOptions> = {
-        useStructuredOutput: true,
-      };
+    test("format is optional", () => {
+      const options: Partial<ExecutionOptions> = {};
       expect(options.format).toBeUndefined();
-    });
-
-    test("works without useStructuredOutput (backward compatibility)", () => {
-      const options: Partial<ExecutionOptions> = {
-        prompt: "Test prompt",
-      };
-      expect(options.useStructuredOutput).toBeUndefined();
     });
   });
 
@@ -337,7 +308,7 @@ describe("Execution Result with Structured Output", () => {
       errors: ["Failed to parse structured output"],
       success: false,
       exitCode: 1,
-      structuredOutput: undefined,
+      // structuredOutput omitted - extraction failed
     };
 
     expect(result.structuredOutput).toBeUndefined();

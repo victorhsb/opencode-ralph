@@ -27,7 +27,7 @@ export interface ExecutionResult {
   success: boolean;
   /** Exit code (0 for success, non-zero for failure) */
   exitCode: number;
-  /** Structured output data when useStructuredOutput was enabled */
+  /** Structured output data when format is provided */
   structuredOutput?: StructuredOutput;
 }
 
@@ -36,7 +36,7 @@ export interface ExecutionOptions {
   onEvent?: (event: SdkEvent) => void;
   /** Optional abort signal for cancellation */
   signal?: AbortSignal;
-  /** JSON schema format for structured output (when useStructuredOutput is true) */
+  /** JSON schema format for structured output (enables structured output when provided) */
   format?: StructuredOutputSchema;
 }
 
@@ -512,7 +512,7 @@ function extractOutputFromMessage(
  * Extract structured output from SDK message response.
  *
  * The structured output is typically found at result.data.info.structured_output
- * when useStructuredOutput was enabled in the request.
+ * when a format schema was provided in the request.
  */
 function extractStructuredOutput(
   message: unknown

@@ -9,7 +9,7 @@ Operational guide for coding agents working in this repository.
 - Multi-agent CLI support from the upstream project was removed.
 - Primary references: `README.md` and `ARCHITECTURE.md`.
 - SDK references:
-  - `https://github.com/anomalyco/opencode-sdk-js`
+  - `https://github.com/anomalyco/opencode`
   - `https://opencode.ai/docs/sdk`
 
 ## Tech Stack
