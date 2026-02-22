@@ -16,6 +16,7 @@
     "files": [
         "bin/ralph.js",
         "bin/ralph-cli-manager.skill",
+        "bin/ralph-loop-plan-creator.skill",
         "ralph.ts",
         "README.md",
         "LICENSE",

@@ -15,15 +15,51 @@ import {
 } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
+import { fileURLToPath } from "url";
 import type { Command } from "commander";
 import { unzipSync } from "fflate";
 
-// Import the embedded skill file - Bun will embed this in the compiled binary
-// For bundled code, we need to resolve the path relative to this module
-import rawSkillPath from "../../../ralph-cli-manager.skill";
-const skillPath = import.meta.resolve
-  ? import.meta.resolve("./ralph-cli-manager.skill")
-  : rawSkillPath;
+// Import the embedded skill files - Bun will embed these in the compiled binary
+// The import returns the path to the file (or the virtual path in compiled mode)
+// We also use import.meta.resolve as a fallback for bundled JS mode
+import importedRalphCliManagerPath from "../../../ralph-cli-manager.skill";
+import importedRalphLoopPlanCreatorPath from "../../../ralph-loop-plan-creator.skill";
+
+const resolvedRalphCliManagerPath = import.meta.resolve(
+  "./ralph-cli-manager.skill",
+);
+const resolvedRalphLoopPlanCreatorPath = import.meta.resolve(
+  "./ralph-loop-plan-creator.skill",
+);
+
+/**
+ * Resolve skill path based on runtime mode (compiled binary, JS bundle, or dev)
+ */
+function resolveSkillPath(
+  importedPath: string,
+  resolvedPath: string,
+): string {
+  // For compiled binary: importedPath points to virtual fs (/$bunfs/...)
+  // For JS bundle: resolvedPath gives correct path relative to bundle location
+  // For dev mode: importedPath is already the absolute path
+  if (importedPath.startsWith("/$bunfs/")) {
+    return importedPath; // Compiled binary - use virtual fs path
+  }
+  if (importedPath.startsWith("./")) {
+    return fileURLToPath(resolvedPath); // JS bundle - resolve relative to bundle
+  }
+  return importedPath; // Dev mode - use absolute path directly
+}
+
+// Resolve paths for both skills
+const ralphCliManagerPath = resolveSkillPath(
+  importedRalphCliManagerPath,
+  resolvedRalphCliManagerPath,
+);
+const ralphLoopPlanCreatorPath = resolveSkillPath(
+  importedRalphLoopPlanCreatorPath,
+  resolvedRalphLoopPlanCreatorPath,
+);
 
 /**
  * Init command options
@@ -77,7 +113,9 @@ export function initCommandAction(options: InitOptions): void {
   // Check if .ralph/ exists
   if (existsSync(ralphDirPath)) {
     if (!options.force) {
-      console.error(`❌ Error: ${ralphDir}/ already exists. Use --force to overwrite.`);
+      console.error(
+        `❌ Error: ${ralphDir}/ already exists. Use --force to overwrite.`,
+      );
       process.exit(1);
     }
     console.log(`⚠️  Overwriting existing ${ralphDir}/ directory`);
@@ -85,7 +123,10 @@ export function initCommandAction(options: InitOptions): void {
     try {
       rmSync(ralphDirPath, { recursive: true, force: true });
     } catch (error) {
-      console.error(`❌ Error removing existing ${ralphDir}/ directory:`, error);
+      console.error(
+        `❌ Error removing existing ${ralphDir}/ directory:`,
+        error,
+      );
       process.exit(1);
     }
   }
@@ -105,9 +146,9 @@ export function initCommandAction(options: InitOptions): void {
   // Update .gitignore
   updateGitignore(ralphDir);
 
-  // Install skill unless --no-skill
+  // Install skills unless --no-skill
   if (options.skill !== false) {
-    installSkill();
+    installSkills();
   } else {
     console.log("⏭️  Skipping skill installation (--no-skill)");
   }
@@ -116,7 +157,9 @@ export function initCommandAction(options: InitOptions): void {
   console.log("\n📝 Next steps:");
   console.log("   1. Edit .ralph/ralph-tasks.md to add your tasks");
   console.log("   2. Run 'ralph task list' to view your tasks");
-  console.log("   3. Run 'ralph \"your prompt\" --tasks' to start working on tasks");
+  console.log(
+    "   3. Run 'ralph \"your prompt\" --tasks' to start working on tasks",
+  );
   process.exit(0);
 }
 
@@ -187,7 +230,8 @@ function updateGitignore(ralphDir: string): void {
 
     // Add .ralph/ to .gitignore
     // Ensure there's a newline before adding if file doesn't end with one
-    const needsNewline = gitignoreContent.length > 0 && !gitignoreContent.endsWith("\n");
+    const needsNewline =
+      gitignoreContent.length > 0 && !gitignoreContent.endsWith("\n");
     const entry = needsNewline ? `\n${ralphDir}/\n` : `${ralphDir}/\n`;
 
     appendFileSync(gitignorePath, entry, "utf-8");
@@ -199,24 +243,42 @@ function updateGitignore(ralphDir: string): void {
 }
 
 /**
- * Install the ralph-cli-manager skill to opencode skills directory.
- * The skill is embedded in the binary and extracted at runtime.
+ * Skill configuration for embedded skills
  */
-function installSkill(): void {
-  console.log("🔧 Installing ralph-cli-manager skill...");
+interface SkillConfig {
+  name: string;
+  displayName: string;
+  path: string;
+}
 
-  // Determine destination path (~/.config/opencode/skills/ralph-cli-manager)
+/**
+ * Install a single skill to opencode skills directory.
+ * The skill is embedded in the binary and extracted at runtime.
+ * Errors are non-fatal - logs warning and continues.
+ */
+function installSingleSkill(config: SkillConfig): void {
+  console.log(`🔧 Installing ${config.displayName} skill...`);
+
+  // Determine destination path (~/.config/opencode/skills/<skill-name>)
   const home = homedir();
   if (!home) {
-    console.log("   ⚠️  Could not determine home directory, skipping skill installation");
+    console.log(
+      "   ⚠️  Could not determine home directory, skipping skill installation",
+    );
     return;
   }
 
-  const skillDestPath = join(home, ".config", "opencode", "skills", "ralph-cli-manager");
+  const skillDestPath = join(
+    home,
+    ".config",
+    "opencode",
+    "skills",
+    config.name,
+  );
 
   try {
     // Read the embedded skill file
-    const skillContent = readFileSync(skillPath);
+    const skillContent = readFileSync(config.path);
 
     // Unzip using fflate
     const unzipped = unzipSync(new Uint8Array(skillContent));
@@ -229,8 +291,11 @@ function installSkill(): void {
         continue;
       }
 
-      // Remove the "ralph-cli-manager/" prefix from the path
-      const relativePathWithoutPrefix = relativePath.replace(/^ralph-cli-manager\//, "");
+      // Remove the skill name prefix from the path (e.g., "ralph-cli-manager/")
+      const relativePathWithoutPrefix = relativePath.replace(
+        new RegExp(`^${config.name}/`),
+        "",
+      );
       const fullPath = join(skillDestPath, relativePathWithoutPrefix);
       const dir = dirname(fullPath);
 
@@ -248,11 +313,37 @@ function installSkill(): void {
       }
     }
 
-    console.log(`   ✓ Installed skill (${filesWritten} files) to ~/.config/opencode/skills/ralph-cli-manager/`);
+    console.log(
+      `   ✓ Installed skill (${filesWritten} files) to ~/.config/opencode/skills/${config.name}/`,
+    );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error("   ✗ Error installing skill:", errorMessage);
-    console.log("   ℹ️  You may need to manually install the ralph-cli-manager skill");
+    console.error(`   ✗ Error installing ${config.displayName} skill:`, errorMessage);
+    console.log(
+      `   ℹ️  You may need to manually install the ${config.displayName} skill`,
+    );
     // Non-fatal, continue
+  }
+}
+
+/**
+ * Install all embedded skills to opencode skills directory.
+ */
+function installSkills(): void {
+  const skills: SkillConfig[] = [
+    {
+      name: "ralph-cli-manager",
+      displayName: "ralph-cli-manager",
+      path: ralphCliManagerPath,
+    },
+    {
+      name: "ralph-loop-plan-creator",
+      displayName: "ralph-loop-plan-creator",
+      path: ralphLoopPlanCreatorPath,
+    },
+  ];
+
+  for (const skill of skills) {
+    installSingleSkill(skill);
   }
 }
