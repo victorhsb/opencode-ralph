@@ -6,6 +6,7 @@
 
 import { Command } from "commander";
 import { mainCommandAction } from "./commands/main";
+import { registerInitCommand } from "./commands/init";
 import { registerStatusCommand } from "./commands/status";
 import { registerTaskCommands } from "./commands/task";
 import { registerContextCommands } from "./commands/context";
@@ -94,6 +95,7 @@ function configureProgram(program: Command): Command {
   });
 
   // Register subcommands
+  registerInitCommand(program);
   registerStatusCommand(program);
   registerTaskCommands(program);
   registerContextCommands(program);

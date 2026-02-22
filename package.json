@@ -8,13 +8,14 @@
     },
     "scripts": {
         "start": "bun ralph.ts",
-        "build": "bun build ralph.ts --target bun --outfile bin/ralph.js && bun build ralph.ts --outfile bin/ralph --compile",
+        "build": "bun build ralph.ts --target bun --outdir bin --no-splitting --asset-naming='[name].[ext]' && bun build ralph.ts --outfile bin/ralph --compile",
         "test": "bun test",
         "test:smoke": "bun test ./tests/ralph.test.ts",
         "install-local": "bun link"
     },
     "files": [
         "bin/ralph.js",
+        "bin/ralph-cli-manager.skill",
         "ralph.ts",
         "README.md",
         "LICENSE",
@@ -52,6 +53,7 @@
     "dependencies": {
         "@opencode-ai/sdk": "^1.2.10",
         "commander": "^14.0.3",
+        "fflate": "^0.8.2",
         "zod": "^4.3.6"
     },
     "devDependencies": {
