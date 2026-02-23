@@ -67,6 +67,7 @@ const ralphLoopPlanCreatorPath = resolveSkillPath(
 export interface InitOptions {
   skill?: boolean;
   force?: boolean;
+  skillsScope?: "local" | "global";
 }
 
 /**
@@ -99,7 +100,32 @@ export function registerInitCommand(program: Command): void {
     .description("Initialize Ralph in the current project")
     .option("--no-skill", "Skip skill installation")
     .option("--force", "Overwrite existing .ralph/ directory")
-    .action(initCommandAction);
+    .option(
+      "--skills-scope <scope>",
+      "Install skills locally (project) or globally (user home)",
+      "local",
+    )
+    .addHelpText(
+      "after",
+      `
+Examples:
+  $ ralph init                          # Initialize with local skills (default)
+  $ ralph init --skills-scope local     # Same as above
+  $ ralph init --skills-scope global    # Install skills to ~/.config/opencode/skills/`,
+    )
+    .action((options: InitOptions) => {
+      // Validate skills-scope using choices logic
+      if (
+        options.skillsScope !== undefined &&
+        !["local", "global"].includes(options.skillsScope)
+      ) {
+        console.error(
+          `Error: Invalid --skills-scope value "${options.skillsScope}". Must be "local" or "global".`,
+        );
+        process.exit(1);
+      }
+      initCommandAction(options);
+    });
 }
 
 /**
@@ -144,11 +170,13 @@ export function initCommandAction(options: InitOptions): void {
   createStarterFiles(ralphDirPath);
 
   // Update .gitignore
-  updateGitignore(ralphDir);
+  const skillsScope = options.skillsScope ?? "local";
+  updateGitignore(ralphDir, skillsScope);
 
   // Install skills unless --no-skill
   if (options.skill !== false) {
-    installSkills();
+    const scope = options.skillsScope ?? "local";
+    installSkills(scope);
   } else {
     console.log("⏭️  Skipping skill installation (--no-skill)");
   }
@@ -192,18 +220,26 @@ function createStarterFiles(ralphDirPath: string): void {
 }
 
 /**
- * Update .gitignore to include .ralph/ entry
+ * Update .gitignore to include .ralph/ and optionally .opencode/ entries
  * @param ralphDir - The .ralph directory name
+ * @param skillsScope - Installation scope (local installs need .opencode/ in gitignore)
  */
-function updateGitignore(ralphDir: string): void {
+function updateGitignore(ralphDir: string, skillsScope: SkillScope): void {
   const gitignorePath = join(process.cwd(), ".gitignore");
+  const entriesToAdd: string[] = [ralphDir];
+
+  // For local skills installation, also add .opencode/ to gitignore
+  if (skillsScope === "local") {
+    entriesToAdd.push(".opencode");
+  }
 
   // Check if .gitignore exists
   if (!existsSync(gitignorePath)) {
     console.log("📄 Creating .gitignore...");
     try {
-      writeFileSync(gitignorePath, `${ralphDir}/\n`, "utf-8");
-      console.log("   ✓ Added .ralph/ to .gitignore");
+      const content = entriesToAdd.map((entry) => `${entry}/\n`).join("");
+      writeFileSync(gitignorePath, content, "utf-8");
+      console.log("   ✓ Added to .gitignore:", entriesToAdd.join(", "));
       return;
     } catch (error) {
       console.error("   ✗ Error creating .gitignore:", error);
@@ -212,35 +248,50 @@ function updateGitignore(ralphDir: string): void {
     }
   }
 
-  // Check if .ralph/ is already in .gitignore
+  // Check which entries are already in .gitignore and add missing ones
   try {
     const gitignoreContent = readFileSync(gitignorePath, "utf-8");
     const lines = gitignoreContent.split("\n");
 
-    // Check for exact match or pattern match
-    const hasEntry = lines.some((line) => {
-      const trimmed = line.trim();
-      return trimmed === ralphDir || trimmed === `${ralphDir}/`;
+    const entriesToAddFiltered = entriesToAdd.filter((entry) => {
+      return !lines.some((line) => {
+        const trimmed = line.trim();
+        return (
+          trimmed === entry ||
+          trimmed === `${entry}/` ||
+          trimmed === `${entry}/*`
+        );
+      });
     });
 
-    if (hasEntry) {
-      console.log("📄 .gitignore already contains .ralph/ entry");
+    if (entriesToAddFiltered.length === 0) {
+      console.log("📄 .gitignore already contains all necessary entries");
       return;
     }
 
-    // Add .ralph/ to .gitignore
+    // Add missing entries to .gitignore
     // Ensure there's a newline before adding if file doesn't end with one
     const needsNewline =
       gitignoreContent.length > 0 && !gitignoreContent.endsWith("\n");
-    const entry = needsNewline ? `\n${ralphDir}/\n` : `${ralphDir}/\n`;
+    const entriesText = entriesToAddFiltered
+      .map((entry) => `${entry}/`)
+      .join("\n");
+    const entry = needsNewline
+      ? `\n${entriesText}\n`
+      : `${entriesText}\n`;
 
     appendFileSync(gitignorePath, entry, "utf-8");
-    console.log("📄 Added .ralph/ to .gitignore");
+    console.log("📄 Added to .gitignore:", entriesToAddFiltered.join(", "));
   } catch (error) {
     console.error("   ✗ Error updating .gitignore:", error);
     // Non-fatal, continue
   }
 }
+
+/**
+ * Skill scope type
+ */
+type SkillScope = "local" | "global";
 
 /**
  * Skill configuration for embedded skills
@@ -252,29 +303,44 @@ interface SkillConfig {
 }
 
 /**
+ * Get the destination path for a skill based on scope.
+ * @param config - Skill configuration
+ * @param scope - Installation scope (local or global)
+ * @returns The destination path for the skill
+ */
+function getSkillDestinationPath(
+  config: SkillConfig,
+  scope: SkillScope,
+): string | null {
+  if (scope === "global") {
+    const home = homedir();
+    if (!home) {
+      return null;
+    }
+    return join(home, ".config", "opencode", "skills", config.name);
+  }
+  // Local scope: install to .opencode/skills/<skill-name> in current project
+  return join(process.cwd(), ".opencode", "skills", config.name);
+}
+
+/**
  * Install a single skill to opencode skills directory.
  * The skill is embedded in the binary and extracted at runtime.
  * Errors are non-fatal - logs warning and continues.
+ * @param config - Skill configuration
+ * @param scope - Installation scope (local or global)
  */
-function installSingleSkill(config: SkillConfig): void {
+function installSingleSkill(config: SkillConfig, scope: SkillScope): void {
   console.log(`🔧 Installing ${config.displayName} skill...`);
 
-  // Determine destination path (~/.config/opencode/skills/<skill-name>)
-  const home = homedir();
-  if (!home) {
+  // Determine destination path based on scope
+  const skillDestPath = getSkillDestinationPath(config, scope);
+  if (!skillDestPath) {
     console.log(
-      "   ⚠️  Could not determine home directory, skipping skill installation",
+      "   ⚠️  Could not determine destination path, skipping skill installation",
     );
     return;
   }
-
-  const skillDestPath = join(
-    home,
-    ".config",
-    "opencode",
-    "skills",
-    config.name,
-  );
 
   try {
     // Read the embedded skill file
@@ -313,8 +379,12 @@ function installSingleSkill(config: SkillConfig): void {
       }
     }
 
+    const displayPath =
+      scope === "global"
+        ? `~/.config/opencode/skills/${config.name}/`
+        : `.opencode/skills/${config.name}/`;
     console.log(
-      `   ✓ Installed skill (${filesWritten} files) to ~/.config/opencode/skills/${config.name}/`,
+      `   ✓ Installed skill (${filesWritten} files) to ${displayPath}`,
     );
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -328,8 +398,12 @@ function installSingleSkill(config: SkillConfig): void {
 
 /**
  * Install all embedded skills to opencode skills directory.
+ * @param scope - Installation scope (local or global), defaults to "local"
  */
-function installSkills(): void {
+function installSkills(scope: SkillScope = "local"): void {
+  const scopeLabel = scope === "local" ? "locally" : "globally";
+  console.log(`📦 Installing skills ${scopeLabel}...`);
+
   const skills: SkillConfig[] = [
     {
       name: "ralph-cli-manager",
@@ -344,6 +418,6 @@ function installSkills(): void {
   ];
 
   for (const skill of skills) {
-    installSingleSkill(skill);
+    installSingleSkill(skill, scope);
   }
 }
