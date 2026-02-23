@@ -43,19 +43,19 @@ const RalphHistorySchema = z.object({
 export type RalphHistory = z.infer<typeof RalphHistorySchema>;
 
 const SupervisorConfigSchema = z.object({
-  enabled: z.boolean(),
-  model: z.string(),
-  noActionPromise: z.string(),
-  suggestionPromise: z.string(),
-  memoryLimit: z.number().int().nonnegative(),
+  enabled: z.boolean().default(false),
+  model: z.string().default(""),
+  noActionPromise: z.string().default("CONTINUE"),
+  suggestionPromise: z.string().default("SUGGEST"),
+  memoryLimit: z.number().int().nonnegative().default(50),
   promptTemplate: z.string().optional(),
 });
 
 export type SupervisorConfig = z.infer<typeof SupervisorConfigSchema>;
 
 const SupervisorStateSchema = z.object({
-  enabled: z.boolean(),
-  pausedForDecision: z.boolean(),
+  enabled: z.boolean().default(false),
+  pausedForDecision: z.boolean().default(false),
   pauseIteration: z.number().int().positive().optional(),
   pauseReason: z.string().optional(),
   lastRunAt: z.string().optional(),
@@ -72,12 +72,12 @@ const RalphStateSchema = z.object({
   maxIterations: z.number().int().positive(),
   completionPromise: z.string(),
   abortPromise: z.string().optional(),
-  tasksMode: z.boolean(),
+  tasksMode: z.boolean().default(false),
   taskPromise: z.string(),
   prompt: z.string(),
   promptTemplate: z.string().optional(),
   startedAt: z.string(),
-  model: z.string(),
+  model: z.string().default(""),
   supervisor: SupervisorConfigSchema.optional(),
   supervisorState: SupervisorStateSchema.optional(),
 });
@@ -120,6 +120,12 @@ function backupCorruptedFile(filePath: string): void {
   }
 }
 
+function formatZodError(error: z.ZodError): string {
+  return error.errors
+    .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
+    .join("\n") || "Validation failed with no specific errors";
+}
+
 function migrateState(raw: unknown): unknown {
   if (typeof raw !== "object" || raw === null) {
     return raw;
@@ -129,6 +135,22 @@ function migrateState(raw: unknown): unknown {
 
   if (!("version" in state)) {
     state.version = 1;
+  }
+
+  // Ensure nested supervisor objects have all required fields
+  if ("supervisor" in state && state.supervisor !== null && typeof state.supervisor === "object") {
+    const supervisor = state.supervisor as Record<string, unknown>;
+    if (!("enabled" in supervisor)) supervisor.enabled = false;
+    if (!("model" in supervisor)) supervisor.model = "";
+    if (!("noActionPromise" in supervisor)) supervisor.noActionPromise = "CONTINUE";
+    if (!("suggestionPromise" in supervisor)) supervisor.suggestionPromise = "SUGGEST";
+    if (!("memoryLimit" in supervisor)) supervisor.memoryLimit = 50;
+  }
+
+  if ("supervisorState" in state && state.supervisorState !== null && typeof state.supervisorState === "object") {
+    const supervisorState = state.supervisorState as Record<string, unknown>;
+    if (!("enabled" in supervisorState)) supervisorState.enabled = false;
+    if (!("pausedForDecision" in supervisorState)) supervisorState.pausedForDecision = false;
   }
 
   return state;
@@ -152,19 +174,10 @@ export function loadState(): RalphState | null {
       return result.data;
     }
 
-    if (!result.error) {
-      backupCorruptedFile(path);
-      throw new StateValidationError(
-        "State file validation failed. The corrupted file has been backed up.",
-        path
-      );
-    }
-
-    const errorDetails = result.error.errors
-      .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
-      .join("\n");
-
     backupCorruptedFile(path);
+
+    // result.error is guaranteed when result.success === false
+    const errorDetails = formatZodError(result.error);
 
     throw new StateValidationError(
       `State file validation failed. The corrupted file has been backed up.\n` +
@@ -220,19 +233,10 @@ export function loadHistory(): RalphHistory {
       return result.data;
     }
 
-    if (!result.error) {
-      backupCorruptedFile(path);
-      throw new StateValidationError(
-        "History file validation failed. The corrupted file has been backed up.",
-        path
-      );
-    }
-
-    const errorDetails = result.error.errors
-      .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
-      .join("\n");
-
     backupCorruptedFile(path);
+
+    // result.error is guaranteed when result.success === false
+    const errorDetails = formatZodError(result.error);
 
     throw new StateValidationError(
       `History file validation failed. The corrupted file has been backed up.\n` +

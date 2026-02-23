@@ -9,6 +9,7 @@ import type { Command } from "commander";
 import {
   loadState,
   loadHistory,
+  StateValidationError,
   type RalphHistory,
   type RalphState,
 } from "../../state/state";
@@ -52,8 +53,35 @@ export function registerStatusCommand(program: Command): void {
  * @param options - Command options
  */
 export function statusCommandAction(options: StatusOptions): void {
-  const state = loadState();
-  const history = loadHistory();
+  let state: RalphState | null = null;
+  let history: RalphHistory = {
+    iterations: [],
+    totalDurationMs: 0,
+    struggleIndicators: { repeatedErrors: {}, noProgressIterations: 0, shortIterations: 0 }
+  };
+  let stateError: string | null = null;
+  let historyError: string | null = null;
+
+  try {
+    state = loadState();
+  } catch (e) {
+    if (e instanceof StateValidationError) {
+      stateError = e.message;
+    } else {
+      stateError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  try {
+    history = loadHistory();
+  } catch (e) {
+    if (e instanceof StateValidationError) {
+      historyError = e.message;
+    } else {
+      historyError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   const contextPath = getContextPath();
   const context = existsSync(contextPath) ? readFileSync(contextPath, "utf-8").trim() : null;
   const supervisorSuggestions = loadSupervisorSuggestions();
@@ -67,9 +95,19 @@ export function statusCommandAction(options: StatusOptions): void {
 ╚══════════════════════════════════════════════════════════════════╝
 `);
 
+  if (stateError) {
+    console.log(`\n⚠️  STATE ERROR: ${stateError}`);
+    console.log(`   The corrupted file has been backed up.`);
+  }
+
+  if (historyError) {
+    console.log(`\n⚠️  HISTORY ERROR: ${historyError}`);
+    console.log(`   The corrupted file has been backed up.`);
+  }
+
   if (state?.active) {
     displayActiveState(state, pendingSuggestions);
-  } else {
+  } else if (!stateError) {
     console.log(`⏹️  No active loop`);
   }
 

@@ -110,6 +110,52 @@ describe("state validation", () => {
       expect(result).not.toBeNull();
       expect(result?.version).toBe(1);
     });
+
+    test("migrates state with missing fields", () => {
+      const partialState = {
+        active: true,
+        iteration: 3,
+        minIterations: 1,
+        maxIterations: 10,
+        completionPromise: "DONE",
+        taskPromise: "READY",
+        prompt: "test prompt",
+        startedAt: new Date().toISOString(),
+        // Missing: tasksMode, model
+        supervisor: {
+          // Missing: enabled, model, etc.
+          noActionPromise: "NO_ACTION",
+          suggestionPromise: "SUGGEST_ACTION",
+          memoryLimit: 100,
+        },
+        supervisorState: {
+          // Missing: enabled, only has pausedForDecision
+          pausedForDecision: true,
+        },
+      };
+      writeFileSync(getStateFilePath(), JSON.stringify(partialState));
+
+      const result = loadState();
+      expect(result).not.toBeNull();
+      expect(result?.version).toBe(1);
+
+      // Verify missing top-level fields have defaults
+      expect(result?.tasksMode).toBe(false);
+      expect(result?.model).toBe("");
+
+      // Verify supervisor fields have defaults
+      expect(result?.supervisor).toBeDefined();
+      expect(result?.supervisor?.enabled).toBe(false);
+      expect(result?.supervisor?.model).toBe("");
+      expect(result?.supervisor?.noActionPromise).toBe("NO_ACTION"); // preserved from partial
+      expect(result?.supervisor?.suggestionPromise).toBe("SUGGEST_ACTION"); // preserved from partial
+      expect(result?.supervisor?.memoryLimit).toBe(100); // preserved from partial
+
+      // Verify supervisorState fields have defaults
+      expect(result?.supervisorState).toBeDefined();
+      expect(result?.supervisorState?.enabled).toBe(false);
+      expect(result?.supervisorState?.pausedForDecision).toBe(true); // preserved from partial
+    });
   });
 
   describe("loadHistory", () => {
