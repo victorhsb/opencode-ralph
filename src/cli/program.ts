@@ -28,6 +28,10 @@ export function createProgram(): Command {
  * @returns Configured Command instance
  */
 function configureProgram(program: Command): Command {
+  const collectRepeated = (value: string, previous: string[] = []): string[] => {
+    previous.push(value);
+    return previous;
+  };
 
   program
     .name("ralph")
@@ -60,6 +64,11 @@ function configureProgram(program: Command): Command {
     .option("--allow-all", "Auto-approve all tool permissions")
     .option("--no-allow-all", "Require interactive permission prompts")
     .option("--silent", "Suppress tool execution details and other descriptive output")
+    .option("--verify <cmd>", "Verification command to run after iterations (repeatable)", collectRepeated, [])
+    .option("--verify-mode <mode>", "Verification trigger mode: on-claim|every-iteration", "on-claim")
+    .option("--verify-timeout-ms <n>", "Per-verification-command timeout in milliseconds", parseInt, 300000)
+    .option("--no-verify-fail-fast", "Run all verification commands even after one fails")
+    .option("--verify-max-output-chars <n>", "Max stdout/stderr chars stored per verification step", parseInt, 4000)
     .option("--dry-run", "Print the prompt that would be sent and exit without running");
 
   // Custom validation hooks
@@ -89,6 +98,27 @@ function configureProgram(program: Command): Command {
       const max = parseInt(String(opts.maxIterations), 10);
       if (isNaN(max) || max < 0) {
         console.error("Error: --max-iterations must be non-negative");
+        process.exit(1);
+      }
+    }
+
+    if (opts.verifyMode !== undefined && !["on-claim", "every-iteration"].includes(String(opts.verifyMode))) {
+      console.error("Error: --verify-mode must be one of: on-claim, every-iteration");
+      process.exit(1);
+    }
+
+    if (opts.verifyTimeoutMs !== undefined) {
+      const timeout = parseInt(String(opts.verifyTimeoutMs), 10);
+      if (isNaN(timeout) || timeout <= 0) {
+        console.error("Error: --verify-timeout-ms must be greater than 0");
+        process.exit(1);
+      }
+    }
+
+    if (opts.verifyMaxOutputChars !== undefined) {
+      const maxChars = parseInt(String(opts.verifyMaxOutputChars), 10);
+      if (isNaN(maxChars) || maxChars < 200) {
+        console.error("Error: --verify-max-output-chars must be at least 200");
         process.exit(1);
       }
     }

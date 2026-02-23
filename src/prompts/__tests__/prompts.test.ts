@@ -128,6 +128,53 @@ describe("buildPrompt", () => {
 
     expect(prompt).toContain("<promise>NEXT_TASK</promise>");
   });
+
+  test("includes verification requirements when enabled", () => {
+    const state = createBaseState({
+      verification: {
+        enabled: true,
+        mode: "on-claim",
+        commands: ["bun test", "bun run build"],
+      },
+    });
+
+    const prompt = buildPrompt(state);
+    expect(prompt).toContain("Verification Requirements");
+    expect(prompt).toContain("bun test");
+    expect(prompt).toContain("bun run build");
+  });
+
+  test("includes previous verification failure feedback when last run failed", () => {
+    const state = createBaseState({
+      verification: {
+        enabled: true,
+        mode: "on-claim",
+        commands: ["bun test"],
+        lastRunPassed: false,
+        lastFailureSummary: "Verification failed: exit 1 for \"bun test\"",
+        lastFailureDetails: "- bun test => exit 1\n  stderr:\n    fail",
+      },
+    });
+
+    const prompt = buildPrompt(state);
+    expect(prompt).toContain("Previous Verification Failure");
+    expect(prompt).toContain("Verification failed: exit 1 for \"bun test\"");
+    expect(prompt).toContain("Fix the verification failures before setting completion to true again.");
+  });
+
+  test("omits verification failure feedback after a passing run", () => {
+    const state = createBaseState({
+      verification: {
+        enabled: true,
+        mode: "on-claim",
+        commands: ["bun test"],
+        lastRunPassed: true,
+      },
+    });
+
+    const prompt = buildPrompt(state);
+    expect(prompt).not.toContain("Previous Verification Failure");
+  });
 });
 
 describe("loadCustomPromptTemplate", () => {

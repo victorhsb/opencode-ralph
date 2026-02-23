@@ -12,6 +12,8 @@ import type {
   RalphHistory,
   IterationHistory,
   SupervisorConfig,
+  IterationVerificationRecord,
+  VerificationState,
 } from "../state/state";
 import {
   loadState,
@@ -54,6 +56,7 @@ import {
   getModifiedFilesSinceSnapshot,
 } from "../fs-tracker/fs-tracker";
 import { executeSdkIteration } from "./iteration";
+import { runVerification, summarizeVerificationFailure, type VerificationReason } from "../verification/runner";
 
 export interface LoopOptions {
   prompt: string;
@@ -81,6 +84,11 @@ export interface LoopOptions {
   sdkClient: SdkClient;
   /** Whether to use structured output for completion detection (default: false for backward compatibility) */
   useStructuredOutput?: boolean;
+  verificationCommands?: string[];
+  verificationMode?: "on-claim" | "every-iteration";
+  verificationTimeoutMs?: number;
+  verificationFailFast?: boolean;
+  verificationMaxOutputChars?: number;
 }
 
 export async function runRalphLoop(options: LoopOptions): Promise<void> {
@@ -107,6 +115,11 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     silent,
     agent,
     sdkClient,
+    verificationCommands = [],
+    verificationMode = "on-claim",
+    verificationTimeoutMs = 300000,
+    verificationFailFast = true,
+    verificationMaxOutputChars = 4000,
   } = options;
 
   const existingState = loadState();
@@ -152,6 +165,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
       enabled: supervisorConfig.enabled,
       pausedForDecision: false,
     },
+    verification: buildInitialVerificationState(verificationCommands, verificationMode),
   };
 
   if (resuming && existingState) {
@@ -160,6 +174,11 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
       enabled: supervisorConfig.enabled,
       pausedForDecision: false,
     };
+    state.verification = resolveResumedVerificationState(
+      existingState.verification,
+      verificationCommands,
+      verificationMode,
+    );
   }
 
   if (!resuming) {
@@ -195,6 +214,12 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     if (agent) console.log(`Agent: ${agent}`);
     if (supervisorConfig.enabled) {
       console.log(`Supervisor: ENABLED${supervisorConfig.model ? ` / ${supervisorConfig.model}` : ""}`);
+    }
+    if (state.verification?.enabled && state.verification.commands.length > 0) {
+      console.log(`Verification: ENABLED (${state.verification.mode})`);
+      for (const command of state.verification.commands) {
+        console.log(`  - ${command}`);
+      }
     }
     if (options.disablePlugins) {
       console.log("OpenCode plugins: non-auth plugins disabled");
@@ -333,6 +358,37 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         structuredOutputUsed: !!sdkResult.structuredOutput,
       };
 
+      const verificationReason = getVerificationReason({
+        verificationEnabled: !!state.verification?.enabled && (state.verification?.commands.length ?? 0) > 0,
+        verificationMode: state.verification?.mode ?? verificationMode,
+        completionDetected,
+        taskCompletionDetected,
+      });
+
+      let verificationRecord: IterationVerificationRecord | undefined;
+      if (verificationReason && state.verification?.enabled && state.verification.commands.length > 0) {
+        console.log(`\n🧪 Running verification (reason: ${verificationReason})...`);
+        verificationRecord = await runVerification({
+          commands: state.verification.commands,
+          timeoutMs: verificationTimeoutMs,
+          failFast: verificationFailFast,
+          maxOutputChars: verificationMaxOutputChars,
+          reason: verificationReason,
+        });
+        iterationRecord.verification = verificationRecord;
+        logVerificationSummary(verificationRecord);
+        updateVerificationStateAfterRun(state, verificationRecord, state.iteration);
+
+        if (!verificationRecord.allPassed) {
+          if (completionDetected) {
+            shouldComplete = false;
+            console.log("❌ Completion claim rejected: verification failed. Continuing loop.");
+          } else if (taskCompletionDetected) {
+            console.log("❌ Task completion claim rejected: verification failed. Continuing loop.");
+          }
+        }
+      }
+
       history.iterations.push(iterationRecord);
       history.totalDurationMs += iterationDuration;
 
@@ -462,7 +518,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
               supervisorCfg.memoryLimit,
             );
 
-            if (completionDetected) {
+            if (shouldComplete) {
               state.supervisorState = {
                 ...(state.supervisorState ?? { enabled: true, pausedForDecision: false }),
                 enabled: true,
@@ -497,7 +553,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         process.exit(1);
       }
 
-      if (taskCompletionDetected && !completionDetected) {
+      if (taskCompletionDetected && !completionDetected && (!verificationRecord || verificationRecord.allPassed)) {
         console.log(`\n🔄 Task completion detected: <promise>${taskPromise}</promise>`);
         console.log(`   Moving to next task in iteration ${state.iteration + 1}...`);
       }
@@ -567,4 +623,96 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     }
   }
 
+}
+
+function buildInitialVerificationState(
+  commands: string[],
+  mode: "on-claim" | "every-iteration",
+): VerificationState | undefined {
+  if (commands.length === 0) {
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    mode,
+    commands,
+  };
+}
+
+function resolveResumedVerificationState(
+  existing: VerificationState | undefined,
+  commands: string[],
+  mode: "on-claim" | "every-iteration",
+): VerificationState | undefined {
+  if (commands.length > 0) {
+    return {
+      ...(existing ?? {}),
+      enabled: true,
+      mode,
+      commands,
+    };
+  }
+  return existing;
+}
+
+function getVerificationReason(input: {
+  verificationEnabled: boolean;
+  verificationMode: "on-claim" | "every-iteration";
+  completionDetected: boolean;
+  taskCompletionDetected: boolean;
+}): VerificationReason | null {
+  if (!input.verificationEnabled) {
+    return null;
+  }
+
+  if (input.verificationMode === "every-iteration") {
+    return "every_iteration";
+  }
+
+  if (input.completionDetected) {
+    return "completion_claim";
+  }
+
+  if (input.taskCompletionDetected) {
+    return "task_completion_claim";
+  }
+
+  return null;
+}
+
+function updateVerificationStateAfterRun(
+  state: RalphState,
+  record: IterationVerificationRecord,
+  iteration: number,
+): void {
+  if (!state.verification) {
+    return;
+  }
+
+  state.verification.lastRunIteration = iteration;
+  state.verification.lastRunPassed = record.allPassed;
+
+  if (record.allPassed) {
+    delete state.verification.lastFailureSummary;
+    delete state.verification.lastFailureDetails;
+    return;
+  }
+
+  const failure = summarizeVerificationFailure(record);
+  state.verification.lastFailureSummary = failure.summary;
+  state.verification.lastFailureDetails = failure.details;
+}
+
+function logVerificationSummary(record: IterationVerificationRecord): void {
+  for (const step of record.steps) {
+    const status = step.timedOut ? "TIMEOUT" : step.exitCode === 0 ? "PASS" : "FAIL";
+    console.log(`   ${status} (${step.durationMs}ms): ${step.command}`);
+  }
+
+  if (record.allPassed) {
+    console.log("✅ Verification passed");
+  } else {
+    console.log("❌ Verification failed");
+  }
 }
