@@ -2,85 +2,149 @@
 
 This document tracks potential improvements to Open Ralph Wiggum, organized by priority and category. The codebase is already well-structured with good separation of concerns and clear documentation—these suggestions focus on maintainability, robustness, and production-readiness.
 
+## Deferred From Report-Driven MVP Reliability Plan (Explicitly Out of Scope for First Execution)
+
+This section captures items we intentionally postponed while scoping the first implementation wave around **MVP reliability**, with **verification/backpressure** as the primary theme.
+
+These are not dropped. They are deferred so the first iteration can focus on native verification gating, completion rejection on failed checks, and better verification observability with minimal architectural churn.
+
+### Out of Scope for MVP Reliability (Do Later)
+
+#### 1. Full Supervisor Decision Engine / Policy-Based Orchestration
+
+**Deferred because:** MVP focuses on backpressure and completion correctness, not redesigning the supervisor contract.
+
+**Not in first implementation:**
+- Structured supervisor decisions like `CONTINUE | STOP_SUCCESS | STOP_FAILED | ESCALATE | ROLLBACK`
+- Hard-gate supervisor mode that can block completion directly
+- Risk scoring / policy evaluation (security, scope drift, contract changes)
+- Automated rollback decisions and rollback orchestration
+
+**Current approach preserved for MVP:** Supervisor remains suggestion-based (`add_task` / `add_context`) with user approval.
+
+#### 2. Token/Cost/Time Budgeting and Budget-Aware Stop Policies
+
+**Deferred because:** Requires broader telemetry and policy design than MVP verification gating.
+
+**Not in first implementation:**
+- Token budget tracking per iteration / per run
+- Cost estimation and accumulated spend reporting
+- Time budget stop conditions (e.g. stop after total runtime threshold)
+- Budget-aware strategy changes (e.g. pause, degrade model, or force summary/replan)
+
+#### 3. Config-File Based Verification / Policy Definition
+
+**Deferred because:** We chose **CLI flags first** for faster adoption and lower implementation risk.
+
+**Not in first implementation:**
+- `.ralph/config.json` / `.ralphrc.json` / `ralph.config.ts` as the primary source for verification rules
+- Merge/precedence logic between CLI, project config, and user config for verification policies
+- Named reusable verification profiles
+
+**MVP choice:** verification/backpressure is configured via CLI flags only.
+
+#### 4. Automatic Checkpoint / Rollback / Recovery Workflow
+
+**Deferred because:** This introduces destructive operations, checkpoint policy, and UX decisions that are not required for first-pass verification reliability.
+
+**Not in first implementation:**
+- Built-in checkpoint creation strategy (tags/commits/snapshots)
+- Automatic rollback on verification regressions
+- Replan-after-rollback workflow
+- Recovery policy engine (e.g. rollback after N failed attempts)
+
+#### 5. Supervisor Architecture Expansion (Planner/Builder/Supervisor Triad)
+
+**Deferred because:** It is a larger orchestration redesign that should happen after verification gates stabilize loop behavior.
+
+**Not in first implementation:**
+- Dedicated planner agent with explicit 3-7 task planning cycles
+- Separate builder/supervisor roles with formal machine-readable contracts
+- Multi-validator supervisor pipeline (quality/security/perf/license validators)
+- HITL escalation framework driven by structured supervisor output
+
+#### 6. Advanced Verification Policy Features (Post-MVP)
+
+**Deferred because:** The first wave only needs baseline command execution and completion gating.
+
+**Not in first implementation:**
+- Named verification steps (`--verify-step <name>::<cmd>`)
+- Required vs optional verification steps
+- Trigger granularity beyond `on-claim` / `every-iteration`
+- Failure streak policies (pause/fail after repeated verification failures)
+- Rich per-step verbosity controls / log export
+
+#### 7. Configurable Budget + Safety Policy Engine
+
+**Deferred because:** Policy engines need a stable verification substrate first.
+
+**Not in first implementation:**
+- Unified policy config for verification, budgets, supervisor, and escalation
+- Risk thresholds and enforcement modes
+- Centralized policy evaluation component reused across loop/supervisor
+
+#### 8. Broader CLI Redesign / Breaking UX Cleanup
+
+**Deferred because:** Although breaking changes were allowed, MVP reliability should land with minimal operator disruption.
+
+**Not in first implementation:**
+- Reworking command/subcommand layout
+- Renaming/removing existing flags as part of a broader CLI cleanup
+- Large migration of prompt/supervisor CLI surface
+
+**MVP choice:** add reliability capabilities as opt-in flags, keep current commands working.
+
+### Follow-Up Backlog (Recommended Order After MVP)
+
+1. **Phase 2: Stronger Backpressure Policies**
+   Add named verification steps, optional/required checks, failure streak policies, and more precise triggers.
+
+2. **Phase 3: Supervisor Upgrade**
+   Expand supervisor output schema beyond suggestions into structured decisions and add risk-based pause/escalation.
+
+3. **Phase 4: Config + Budgets**
+   Introduce persistent config for verification/policies and add cost/time/token budget enforcement.
+
+### Scope Decisions Captured (For Future Reference)
+
+- **Primary theme for first wave:** Backpressure & verification
+- **Execution scope:** MVP reliability (not ambitious orchestrator redesign)
+- **Verification config source (v1):** CLI flags first
+- **Default behavior on false completion claim:** Reject completion and continue loop
+- **Compatibility stance for MVP:** Preserve existing behavior unless verification is enabled
+
 ## High Priority
 
-### 1. TypeScript Configuration & Strictness
+### 1. Dependency Version Pinning / Update Policy
 
-**Status:** Not started  
-**Impact:** High - Prevents runtime bugs  
-**Effort:** Low
-
-Currently the project has no `tsconfig.json`, relying on Bun's default TypeScript handling. This misses opportunities for catching bugs at compile time.
-
-**Action Items:**
-- [ ] Create `tsconfig.json` with `strict: true`
-- [ ] Enable `noUncheckedIndexedAccess` to catch potential undefined accesses
-- [ ] Enable `exactOptionalPropertyTypes` for stricter optional property handling
-- [ ] Add `noImplicitReturns` and `noFallthroughCasesInSwitch`
-- [ ] Fix any type errors that emerge after enabling strict mode
-
-**Proposed tsconfig.json:**
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "outDir": "./dist",
-    "rootDir": ".",
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "lib": ["ES2022"]
-  },
-  "include": ["src/**/*", "ralph.ts", "tests/**/*"],
-  "exclude": ["node_modules", "dist", "bin"]
-}
-```
-
----
-
-### 2. Dependency Version Pinning
-
-**Status:** Not started  
+**Status:** Partial (SDK is on stable v1, but update policy/automation is missing)  
 **Impact:** Medium - Prevents unexpected breakages  
 **Effort:** Low
 
-**Current Issue:**
+**Current State:**
 ```json
-"@opencode-ai/sdk": "^0.x"
+"@opencode-ai/sdk": "^1.2.10"
 ```
 
-The `^0.x` allows any `0.x.x` version. In semver, versions below 1.0.0 can introduce breaking changes in minor versions.
+The original `^0.x` concern is no longer applicable because the project is now on the stable `1.x` SDK line. The remaining work is about dependency update policy and compatibility documentation.
 
 **Action Items:**
-- [ ] Pin to specific version: `"@opencode-ai/sdk": "^0.15.0"` (or current latest)
+- [ ] Decide dependency policy for the SDK (`^1.x` range vs exact pin)
 - [ ] Add Dependabot or Renovate configuration for automated update PRs
 - [ ] Document the SDK version compatibility in README
 
 ---
 
-### 3. State File Validation
+### 2. State File Validation
 
-**Status:** Not started  
+**Status:** Partial (baseline done; versioned migrations remain)  
 **Impact:** High - Prevents crashes from corrupted state  
 **Effort:** Medium
 
-Currently, corrupted state files in `.ralph/` would likely crash the application. Runtime validation would provide graceful degradation.
+Baseline state/history validation, corrupted-file backup, and defaulting migrations are implemented. Remaining work is formalizing future schema-version migration behavior.
 
 **Action Items:**
-- [ ] Add Zod (or similar) for schema validation
-- [ ] Validate state on load with clear error messages
-- [ ] Add automatic state migration for version upgrades
-- [ ] Consider backup/restore mechanism for corrupted states
+- [ ] Expand migration strategy for future schema versions (versioned migrations)
 
 **Example schema:**
 ```typescript
@@ -99,35 +163,31 @@ const StateSchema = z.object({
 
 ## Medium Priority
 
-### 4. Testing Strategy Expansion
+### 3. Testing Strategy Expansion
 
-**Status:** Partial (SDK tests exist)  
+**Status:** Partial (broad unit coverage exists; loop/error-path gaps remain)  
 **Impact:** High - Confidence for refactoring  
 **Effort:** High
 
 **Current State:**
 - One integration test file (`tests/ralph.test.ts`)
-- Some SDK-specific tests in `src/sdk/__tests__/`
+- Multiple focused unit test suites exist across `src/**/__tests__/` (SDK, state, tasks, prompts, fs-tracker, config, io, utils, CLI init)
+- Integration-style CLI tests use a fake SDK path for deterministic coverage
 
 **Action Items:**
-- [ ] Unit tests for pure functions:
-  - Argument parsing (`src/cli/args.ts`)
-  - Prompt building (`src/prompts/prompts.ts`)
-  - Task file parsing (`src/tasks/tasks.ts`)
-  - State management (`src/state/state.ts`)
-  - File tracking (`src/fs-tracker/fs-tracker.ts`)
-- [ ] Integration tests with mocked SDK
+- [ ] Add direct tests for CLI argument parsing/validation edge cases beyond current command coverage
+- [ ] Add focused tests for loop orchestration and retry/error recovery paths
 - [ ] Test coverage reporting (add coverage threshold)
 - [ ] Property-based testing for parsers
 
 **Gaps to fill:**
-- No tests for CLI argument parsing edge cases
-- No tests for loop orchestration logic
-- No tests for error recovery paths
+- CLI argument parsing/validation edge cases are only partially covered
+- Limited direct tests for loop orchestration logic
+- Limited tests for error recovery paths / timeout behavior
 
 ---
 
-### 5. Structured Error Handling
+### 4. Structured Error Handling
 
 **Status:** Not started  
 **Impact:** Medium - Better UX and debugging  
@@ -171,7 +231,7 @@ export class StateCorruptedError extends RalphError {
 
 ---
 
-### 6. Configuration File Support
+### 5. Configuration File Support
 
 **Status:** Not started  
 **Impact:** Medium - Improved UX for regular users  
@@ -205,7 +265,7 @@ Currently all configuration is via CLI arguments. Users would benefit from persi
 
 ## Lower Priority
 
-### 7. Logging Infrastructure
+### 6. Logging Infrastructure
 
 **Status:** Not started  
 **Impact:** Medium - Better debugging  
@@ -232,7 +292,7 @@ logger.warn("No file changes detected", { iteration: state.iteration });
 
 ---
 
-### 8. Performance Monitoring
+### 7. Performance Monitoring
 
 **Status:** Partial (basic duration tracking)  
 **Impact:** Low - Operational insight  
@@ -247,7 +307,7 @@ logger.warn("No file changes detected", { iteration: state.iteration });
 
 ---
 
-### 9. State Management Improvements
+### 8. State Management Improvements
 
 **Status:** Not started  
 **Impact:** Low - Better long-term reliability  
@@ -265,7 +325,7 @@ Currently uses JSON files in `.ralph/` for state.
 
 ---
 
-### 10. Code Organization Refinements
+### 9. Code Organization Refinements
 
 **Status:** Not started  
 **Impact:** Low - Maintainability  
@@ -273,12 +333,12 @@ Currently uses JSON files in `.ralph/` for state.
 
 **Issues identified:**
 - `loop.ts` is ~600 lines
-- `ralph.ts` has mixed concerns (CLI parsing + command dispatch)
-- Command handling uses if/else chain instead of pattern matching
+- `ralph.ts` is already minimal, but `src/cli/program.ts` still centralizes many options and validations
+- Some CLI validation logic uses `console.error + process.exit` hooks that may be worth isolating for testability
 
 **Action Items:**
 - [ ] Extract main loop body into smaller focused functions
-- [ ] Separate command handling from entry point using command pattern
+- [ ] Consider extracting CLI option validation into reusable/testable helpers
 - [ ] Consider early returns to reduce nesting
 
 **Example command pattern:**
@@ -293,7 +353,7 @@ const commands = new Map([
 
 ---
 
-### 11. Documentation Improvements
+### 10. Documentation Improvements
 
 **Status:** Partial (good README)  
 **Impact:** Low - Developer experience  
@@ -310,7 +370,7 @@ const commands = new Map([
 
 ---
 
-### 12. CI/CD Pipeline
+### 11. CI/CD Pipeline
 
 **Status:** Partial (GitHub Actions workflow exists for bot)  
 **Impact:** High - Quality assurance  
@@ -321,7 +381,7 @@ const commands = new Map([
 **Action Items:**
 - [ ] Create `.github/workflows/ci.yml` for PR testing
 - [ ] Run tests on multiple platforms (Ubuntu, macOS)
-- [ ] Add type checking step once tsconfig.json exists
+- [ ] Add a dedicated typecheck script and CI step (tsconfig.json now exists)
 - [ ] Add build verification
 - [ ] Add linting step if linter is adopted
 - [ ] Protect main branch with required checks
@@ -344,22 +404,16 @@ jobs:
 
 ---
 
-## Completed
-
-*None yet*
-
----
-
 ## Decision Log
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| | | |
+| 2026-02-23 | Refresh improvement plan statuses and assumptions | The document had drifted behind the codebase and marked completed work as "Not started" |
 
 ---
 
 ## Notes
 
-- This is a living document—items should be moved to "Completed" as they're finished
+- This is a living document of pending work; remove items when they are finished
 - Priority can change based on user feedback or operational needs
 - Some items may be rejected after further consideration—document reasons in Decision Log
