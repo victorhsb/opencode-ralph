@@ -14,6 +14,7 @@ import { runRalphLoop } from "../../loop/loop";
 import { readPromptFile } from "../../io/files";
 import { buildPrompt } from "../../prompts/prompts";
 import { checkAgentExists, formatAgentList } from "../../sdk/agents";
+import type { VerificationState } from "../../state/state";
 
 /**
  * Parsed and validated CLI options
@@ -44,6 +45,11 @@ export interface MainCommandOptions {
   allowAllExplicit: boolean;
   silent: boolean;
   dryRun: boolean;
+  verify?: string[];
+  verifyMode?: "on-claim" | "every-iteration";
+  verifyTimeoutMs?: number;
+  verifyFailFast?: boolean;
+  verifyMaxOutputChars?: number;
 }
 
 /**
@@ -115,6 +121,7 @@ export async function mainCommandAction(this: Command): Promise<void> {
  * @param prompt - The prompt text
  */
 function handleDryRun(opts: MainCommandOptions, prompt: string): void {
+  const verification = buildVerificationStateFromOptions(opts);
   const state: RalphState = {
     version: 1,
     active: false,
@@ -141,12 +148,20 @@ function handleDryRun(opts: MainCommandOptions, prompt: string): void {
       enabled: opts.supervisor,
       pausedForDecision: false,
     },
+    verification,
   };
 
   const fullPrompt = buildPrompt(state, opts.promptTemplate);
   console.log("=== PROMPT THAT WOULD BE SENT ===");
   console.log(fullPrompt);
   console.log("\n=== END OF PROMPT ===");
+  if (verification?.enabled) {
+    console.log("\n=== VERIFICATION CONFIG ===");
+    console.log(`Mode: ${verification.mode}`);
+    for (const command of verification.commands) {
+      console.log(`- ${command}`);
+    }
+  }
   process.exit(0);
 }
 
@@ -156,6 +171,7 @@ function handleDryRun(opts: MainCommandOptions, prompt: string): void {
  * @param prompt - The prompt text
  */
 async function executeMainWorkflow(opts: MainCommandOptions, prompt: string): Promise<void> {
+  const verification = buildVerificationOptions(opts);
   let sdkClient: SdkClient | null = null;
 
   // Initialize SDK client
@@ -219,6 +235,11 @@ async function executeMainWorkflow(opts: MainCommandOptions, prompt: string): Pr
       silent: opts.silent,
       agent: opts.agent,
       sdkClient,
+      verificationCommands: verification.commands,
+      verificationMode: verification.mode,
+      verificationTimeoutMs: verification.timeoutMs,
+      verificationFailFast: verification.failFast,
+      verificationMaxOutputChars: verification.maxOutputChars,
     });
   } catch (error) {
     console.error("Fatal error:", error);
@@ -232,4 +253,37 @@ async function executeMainWorkflow(opts: MainCommandOptions, prompt: string): Pr
       }
     }
   }
+}
+
+function buildVerificationOptions(opts: MainCommandOptions): {
+  commands: string[];
+  mode: "on-claim" | "every-iteration";
+  timeoutMs: number;
+  failFast: boolean;
+  maxOutputChars: number;
+} {
+  const commands = Array.isArray(opts.verify)
+    ? opts.verify.map((cmd) => cmd.trim()).filter(Boolean)
+    : [];
+
+  return {
+    commands,
+    mode: opts.verifyMode ?? "on-claim",
+    timeoutMs: opts.verifyTimeoutMs ?? 300000,
+    failFast: opts.verifyFailFast ?? true,
+    maxOutputChars: opts.verifyMaxOutputChars ?? 4000,
+  };
+}
+
+function buildVerificationStateFromOptions(opts: MainCommandOptions): VerificationState | undefined {
+  const verification = buildVerificationOptions(opts);
+  if (verification.commands.length === 0) {
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    mode: verification.mode,
+    commands: verification.commands,
+  };
 }

@@ -14,6 +14,26 @@ import { z } from "zod";
 
 export { getStateDir };
 
+const VerificationStepRecordSchema = z.object({
+  command: z.string(),
+  exitCode: z.number().int().nullable(),
+  timedOut: z.boolean(),
+  durationMs: z.number().int().nonnegative(),
+  stdoutSnippet: z.string().optional(),
+  stderrSnippet: z.string().optional(),
+});
+
+export type VerificationStepRecord = z.infer<typeof VerificationStepRecordSchema>;
+
+const IterationVerificationRecordSchema = z.object({
+  triggered: z.boolean(),
+  reason: z.enum(["completion_claim", "task_completion_claim", "every_iteration"]),
+  allPassed: z.boolean(),
+  steps: z.array(VerificationStepRecordSchema),
+});
+
+export type IterationVerificationRecord = z.infer<typeof IterationVerificationRecordSchema>;
+
 const IterationHistorySchema = z.object({
   iteration: z.number().int().positive(),
   startedAt: z.string(),
@@ -26,6 +46,7 @@ const IterationHistorySchema = z.object({
   completionDetected: z.boolean(),
   errors: z.array(z.string()),
   structuredOutputUsed: z.boolean().optional(),
+  verification: IterationVerificationRecordSchema.optional(),
 });
 
 export type IterationHistory = z.infer<typeof IterationHistorySchema>;
@@ -64,6 +85,18 @@ const SupervisorStateSchema = z.object({
 
 export type SupervisorState = z.infer<typeof SupervisorStateSchema>;
 
+const VerificationStateSchema = z.object({
+  enabled: z.boolean().default(false),
+  mode: z.enum(["on-claim", "every-iteration"]).default("on-claim"),
+  commands: z.array(z.string()).default([]),
+  lastRunIteration: z.number().int().positive().optional(),
+  lastRunPassed: z.boolean().optional(),
+  lastFailureSummary: z.string().optional(),
+  lastFailureDetails: z.string().optional(),
+});
+
+export type VerificationState = z.infer<typeof VerificationStateSchema>;
+
 const RalphStateSchema = z.object({
   version: z.number().int().positive().default(1),
   active: z.boolean(),
@@ -80,6 +113,7 @@ const RalphStateSchema = z.object({
   model: z.string().default(""),
   supervisor: SupervisorConfigSchema.optional(),
   supervisorState: SupervisorStateSchema.optional(),
+  verification: VerificationStateSchema.optional(),
 });
 
 export type RalphState = z.infer<typeof RalphStateSchema>;
@@ -151,6 +185,13 @@ function migrateState(raw: unknown): unknown {
     const supervisorState = state.supervisorState as Record<string, unknown>;
     if (!("enabled" in supervisorState)) supervisorState.enabled = false;
     if (!("pausedForDecision" in supervisorState)) supervisorState.pausedForDecision = false;
+  }
+
+  if ("verification" in state && state.verification !== null && typeof state.verification === "object") {
+    const verification = state.verification as Record<string, unknown>;
+    if (!("enabled" in verification)) verification.enabled = false;
+    if (!("mode" in verification)) verification.mode = "on-claim";
+    if (!("commands" in verification)) verification.commands = [];
   }
 
   return state;

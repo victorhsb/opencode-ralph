@@ -44,7 +44,7 @@ Open Ralph Wiggum works exclusively with **OpenCode** using the official SDK.
 
 | Platform | Requirement |
 |----------|-------------|
-| **OpenCode** | SDK v0.15.0+ (pinned to 0.15.x range) |
+| **OpenCode** | SDK v1.x (via `@opencode-ai/sdk`) |
 
 ---
 
@@ -67,6 +67,7 @@ done
 
 - **SDK Integration** — Direct OpenCode SDK integration (no subprocess overhead)
 - **Self-Correcting Loops** — Agent sees its previous work and fixes its own mistakes
+- **Verification Backpressure (opt-in)** — Gate completion on local checks like tests/builds
 - **Autonomous Execution** — Set it running and come back to finished code
 - **Task Tracking** — Built-in task management with `--tasks` mode
 - **Live Monitoring** — Check progress with `--status` from another terminal
@@ -138,6 +139,12 @@ ralph "Create a small CLI and document usage. Output <promise>COMPLETE</promise>
 
 # With supervisor
 ralph "Build API" --supervisor --max-iterations 15
+
+# With verification gating (completion rejected until checks pass)
+ralph "Implement feature and tests" \
+  --verify "bun test" \
+  --verify "bun run build" \
+  --max-iterations 20
 
 # Complex project with Tasks Mode
 ralph "Build a full-stack web application with user auth and database" \
@@ -254,6 +261,11 @@ Options:
   --supervisor-suggestion-promise TEXT Promise for suggested action (default: USER_DECISION_REQUIRED)
   --supervisor-memory-limit N Number of supervisor memory entries to keep (default: 20)
   --supervisor-prompt-template PATH Custom supervisor prompt template
+  --verify CMD             Verification command (repeatable)
+  --verify-mode MODE       on-claim|every-iteration (default: on-claim)
+  --verify-timeout-ms N    Per verification command timeout (default: 300000)
+  --[no-]verify-fail-fast  Stop verification on first failure (default: true)
+  --verify-max-output-chars N Max stored stdout/stderr per verify step (default: 4000)
   --prompt-file, --file, -f  Read prompt content from a file
   --prompt-template PATH   Use custom prompt template (see Custom Prompts)
   --no-stream              Buffer output and print at the end
@@ -761,3 +773,14 @@ Check out 🏝️ [sandboxed.sh](https://github.com/Th0rgal/sandboxed.sh) — a 
 ## License
 
 MIT
+### Verification and Completion Gating
+
+Verification is opt-in via `--verify`.
+
+- Verification commands run in the order provided.
+- Default mode is `--verify-mode on-claim`, which runs checks only when the agent claims completion (or task completion in tasks mode).
+- `--verify-mode every-iteration` runs checks after every iteration.
+- If the agent claims completion and any verification command fails or times out, Ralph rejects the completion claim and continues the loop.
+- Verification failures are stored in `.ralph/ralph-loop.state.json` / `.ralph/ralph-history.json` and injected into the next iteration prompt as explicit feedback.
+
+This is the current hard reliability gate. Supervisor mode remains suggestion-based and does not replace verification checks.

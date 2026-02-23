@@ -156,6 +156,31 @@ describe("state validation", () => {
       expect(result?.supervisorState?.enabled).toBe(false);
       expect(result?.supervisorState?.pausedForDecision).toBe(true); // preserved from partial
     });
+
+    test("migrates partial verification state fields", () => {
+      const partialState = {
+        version: 1,
+        active: true,
+        iteration: 2,
+        minIterations: 1,
+        maxIterations: 10,
+        completionPromise: "DONE",
+        taskPromise: "READY",
+        prompt: "test prompt",
+        startedAt: new Date().toISOString(),
+        model: "test-model",
+        verification: {
+          enabled: true,
+        },
+      };
+      writeFileSync(getStateFilePath(), JSON.stringify(partialState));
+
+      const result = loadState();
+      expect(result?.verification).toBeDefined();
+      expect(result?.verification?.enabled).toBe(true);
+      expect(result?.verification?.mode).toBe("on-claim");
+      expect(result?.verification?.commands).toEqual([]);
+    });
   });
 
   describe("loadHistory", () => {
@@ -178,6 +203,20 @@ describe("state validation", () => {
           exitCode: 0,
           completionDetected: false,
           errors: [],
+          verification: {
+            triggered: true,
+            reason: "completion_claim",
+            allPassed: false,
+            steps: [
+              {
+                command: "bun test",
+                exitCode: 1,
+                timedOut: false,
+                durationMs: 1234,
+                stderrSnippet: "fail",
+              },
+            ],
+          },
         }],
         totalDurationMs: 1000,
         struggleIndicators: {
@@ -190,6 +229,7 @@ describe("state validation", () => {
       const result = loadHistory();
       expect(result.iterations).toHaveLength(1);
       expect(result.totalDurationMs).toBe(1000);
+      expect(result.iterations[0]?.verification?.allPassed).toBe(false);
     });
 
     test("throws StateValidationError for corrupted JSON", () => {
@@ -251,11 +291,20 @@ describe("state validation", () => {
         prompt: "test prompt",
         startedAt: new Date().toISOString(),
         model: "test-model",
+        verification: {
+          enabled: true,
+          mode: "on-claim",
+          commands: ["bun test"],
+          lastRunIteration: 9,
+          lastRunPassed: false,
+          lastFailureSummary: "failed",
+        },
       };
       saveState(state);
       const loaded = loadState();
       expect(loaded?.iteration).toBe(10);
       expect(loaded?.active).toBe(true);
+      expect(loaded?.verification?.commands).toEqual(["bun test"]);
     });
 
     test("saves and loads history correctly", () => {

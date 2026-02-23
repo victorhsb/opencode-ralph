@@ -61,6 +61,8 @@ ${context}
 ---
 `
     : "";
+  const verificationRulesSection = getVerificationRulesSection(state);
+  const verificationFailureSection = getVerificationFailureSection(state);
 
   if (state.tasksMode) {
     const tasksSection = getTasksModeSection(state);
@@ -68,7 +70,7 @@ ${context}
 # Ralph Wiggum Loop - Iteration ${state.iteration}
 
 You are in an iterative development loop working through a task list.
-${contextSection}${tasksSection}
+${contextSection}${verificationFailureSection}${tasksSection}
 ## Your Main Goal
 
 ${state.prompt}
@@ -93,10 +95,12 @@ The system will check the "completed" field to detect task completion.
 - Do NOT lie or output false promises to exit the loop
 - If stuck, try a different approach
 - Check your work before claiming completion
+${verificationRulesSection ? `- Fix verification failures before claiming completion again\n` : ""}
 
 ## Current Iteration: ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"} (min: ${state.minIterations ?? 1})
 
 Tasks Mode: ENABLED - Work on one task at a time from ralph-tasks.md
+${verificationRulesSection}
 
 Now, work on the current task. Good luck!
 `.trim();
@@ -106,7 +110,7 @@ Now, work on the current task. Good luck!
 # Ralph Wiggum Loop - Iteration ${state.iteration}
 
 You are in an iterative development loop. Work on the task below until you can genuinely complete it.
-${contextSection}
+${contextSection}${verificationFailureSection}
 ## Your Task
 
 ${state.prompt}
@@ -139,9 +143,50 @@ The system will check the "completed" field to detect task completion.
 - If stuck, try a different approach
 - Check your work before claiming completion
 - The loop will continue until you succeed
+${verificationRulesSection ? `- Fix verification failures before claiming completion again\n` : ""}
 
 ## Current Iteration: ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"} (min: ${state.minIterations ?? 1})
+${verificationRulesSection}
 
 Now, work on the task. Good luck!
 `.trim();
+}
+
+function getVerificationRulesSection(state: RalphState): string {
+  if (!state.verification?.enabled || state.verification.commands.length === 0) {
+    return "";
+  }
+
+  const commands = state.verification.commands
+    .map((command) => `- ${command}`)
+    .join("\n");
+
+  return `
+## Verification Requirements
+
+Verification mode: ${state.verification.mode}
+These commands must pass before completion claims are accepted:
+${commands}
+`.trimEnd();
+}
+
+function getVerificationFailureSection(state: RalphState): string {
+  if (!state.verification?.enabled || state.verification.lastRunPassed !== false) {
+    return "";
+  }
+
+  const summary = state.verification.lastFailureSummary ?? "Verification failed in the previous iteration.";
+  const details = state.verification.lastFailureDetails
+    ? `\nDetails:\n${state.verification.lastFailureDetails}`
+    : "";
+
+  return `
+## Previous Verification Failure (must be fixed)
+
+${summary}${details}
+
+Fix the verification failures before setting completion to true again.
+
+---
+`;
 }
