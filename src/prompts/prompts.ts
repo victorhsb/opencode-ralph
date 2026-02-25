@@ -1,7 +1,10 @@
 /**
  * Prompt Building Module
  *
- * Handles prompt building and template variable replacement.
+ * Constructs dynamic prompts for Ralph Loop iterations using composable sections.
+ * Supports two modes: regular (single task) and tasks mode (task list).
+ *
+ * @module prompts
  */
 
 import { existsSync, readFileSync } from "fs";
@@ -9,7 +12,147 @@ import { RalphState } from "../state/state";
 import { loadContext } from "../context/context";
 import { getTasksModeSection } from "../tasks/tasks";
 import { getTasksFilePath } from "../config/config";
+import { PromptBuilder } from "./prompt-builder";
 
+/**
+ * Creates the prompt header with iteration title.
+ * Example: "# Ralph Wiggum Loop - Iteration 3"
+ */
+function buildHeader(state: RalphState): string {
+  return `# Ralph Wiggum Loop - Iteration ${state.iteration}`;
+}
+
+/**
+ * Builds the iteration info content (without header).
+ * The title is added by PromptBuilder.
+ */
+function buildIterationInfoContent(state: RalphState): string {
+  const maxInfo = state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)";
+  const minInfo = state.minIterations ?? 1;
+  return `Current Iteration: ${state.iteration}${maxInfo} (min: ${minInfo})`;
+}
+
+/**
+ * Loads user-added context from .ralph/context.md.
+ * Returns null if no context exists.
+ */
+function buildContextContent(): string | null {
+  return loadContext();
+}
+
+/**
+ * Returns the output format intro text (for use with PromptBuilder).
+ */
+function buildOutputFormatIntro(): string {
+  return `Your response will be parsed as structured JSON with these fields:`;
+}
+
+/**
+ * Returns the output format list items.
+ */
+function buildOutputFormatItems(): string[] {
+  return [
+    `"completed": Set to true ONLY when the task is genuinely complete`,
+    `"reasoning": Briefly explain why the task is or isn't complete`,
+    `"output": Your actual response text`,
+  ];
+}
+
+/**
+ * Returns the output format footer text.
+ */
+function buildOutputFormatFooter(): string {
+  return `The system will check the "completed" field to detect task completion.`;
+}
+
+/**
+ * Returns critical rules list items for tasks mode.
+ */
+function buildCriticalRulesTasksMode(state: RalphState): string[] {
+  const promiseTags = `<promise>${state.taskPromise}</promise> for task completion, <promise>${state.completionPromise}</promise> for ALL tasks done`;
+  return [
+    "Work on ONE task at a time from .ralph/ralph-tasks.md",
+    'Set "completed" to true ONLY when the current task is complete and marked in ralph-tasks.md (or ALL tasks are done for final completion)',
+    'Provide brief reasoning in the "reasoning" field about completion status',
+    'Put your main response text in the "output" field',
+    `The old <promise> tag format is now OPTIONAL: ${promiseTags}`,
+    "Output promise tags DIRECTLY - do not quote them, explain them, or say you \"will\" output them",
+    "Do NOT lie or output false promises to exit the loop",
+    "If stuck, try a different approach",
+    "Check your work before claiming completion",
+  ];
+}
+
+/**
+ * Returns critical rules list items for regular mode.
+ */
+function buildCriticalRulesRegularMode(state: RalphState): string[] {
+  const promiseTags = `<promise>${state.completionPromise}</promise>`;
+  return [
+    'Set "completed" to true ONLY when the task is truly done',
+    'Provide brief reasoning in the "reasoning" field about completion status',
+    'Put your main response text in the "output" field',
+    `The old <promise> tag format is now OPTIONAL: ${promiseTags}`,
+    "Output promise tags DIRECTLY - do not quote it, or say you \"will\" output it",
+    "Do NOT lie or output false promises to exit the loop",
+    "If stuck, try a different approach",
+    "Check your work before claiming completion",
+    "The loop will continue until you succeed",
+  ];
+}
+
+/**
+ * Step-by-step guidance for the iteration (numbered list as text).
+ * PromptBuilder doesn't support numbered lists, so rendered as text.
+ */
+function buildInstructionsContent(): string {
+  return `1. Read the current state of files to understand what's been done
+2. Track your progress and plan remaining work
+3. Make progress on the task
+4. Run tests/verification if applicable
+5. When the task is GENUINELY COMPLETE, set "completed" to true`;
+}
+
+/**
+ * Sets context for tasks mode: working through a task list.
+ */
+function buildTasksModeIntro(): string {
+  return `You are in an iterative development loop working through a task list.`;
+}
+
+/**
+ * Sets context for regular mode: single task until completion.
+ */
+function buildRegularModeIntro(): string {
+  return `You are in an iterative development loop. Work on the task below until you can genuinely complete it.`;
+}
+
+/**
+ * Closing encouragement for tasks mode.
+ */
+function buildTasksModeFooter(): string {
+  return `Tasks Mode: ENABLED - Work on one task at a time from ralph-tasks.md
+
+Now, work on the current task. Good luck!`;
+}
+
+/**
+ * Closing encouragement for regular mode.
+ */
+function buildRegularModeFooter(): string {
+  return `Now, work on the task. Good luck!`;
+}
+
+/**
+ * Loads and processes a custom prompt template file.
+ *
+ * Reads a user-provided template and substitutes variables with loop state values.
+ * Exits with error if the template file doesn't exist.
+ *
+ * @param templatePath - Absolute path to the custom template file
+ * @param state - Current loop state
+ * @returns Processed template string, or null if template doesn't exist
+ */
 export function loadCustomPromptTemplate(templatePath: string, state: RalphState): string | null {
   if (!existsSync(templatePath)) {
     console.error(`Error: Prompt template not found: ${templatePath}`);
@@ -45,103 +188,87 @@ export function loadCustomPromptTemplate(templatePath: string, state: RalphState
   }
 }
 
+/**
+ * Builds the prompt for the current iteration.
+ *
+ * Entry point for prompt construction. Routes to either custom template,
+ * tasks mode prompt, or regular mode prompt based on state.
+ *
+ * @param state - Current loop state
+ * @param promptTemplatePath - Optional path to custom template file
+ * @returns Complete prompt string for this iteration
+ */
 export function buildPrompt(state: RalphState, promptTemplatePath?: string): string {
   if (promptTemplatePath) {
     const customPrompt = loadCustomPromptTemplate(promptTemplatePath, state);
     if (customPrompt) return customPrompt;
   }
 
-  const context = loadContext();
-  const contextSection = context
-    ? `
-## Additional Context (added by user mid-loop)
-
-${context}
-
----
-`
-    : "";
-
   if (state.tasksMode) {
-    const tasksSection = getTasksModeSection(state);
-    return `
-# Ralph Wiggum Loop - Iteration ${state.iteration}
-
-You are in an iterative development loop working through a task list.
-${contextSection}${tasksSection}
-## Your Main Goal
-
-${state.prompt}
-
-## Output Format
-
-Your response will be parsed as structured JSON with these fields:
-- "completed": Set to true ONLY when the task is genuinely complete
-- "reasoning": Briefly explain why the task is or isn't complete
-- "output": Your actual response text
-
-The system will check the "completed" field to detect task completion.
-
-## Critical Rules
-
-- Work on ONE task at a time from .ralph/ralph-tasks.md
-- Set "completed" to true ONLY when the current task is complete and marked in ralph-tasks.md (or ALL tasks are done for final completion)
-- Provide brief reasoning in the "reasoning" field about completion status
-- Put your main response text in the "output" field
-- The old <promise> tag format is now OPTIONAL: <promise>${state.taskPromise}</promise> for task completion, <promise>${state.completionPromise}</promise> for ALL tasks done
-- Output promise tags DIRECTLY - do not quote them, explain them, or say you "will" output them
-- Do NOT lie or output false promises to exit the loop
-- If stuck, try a different approach
-- Check your work before claiming completion
-
-## Current Iteration: ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"} (min: ${state.minIterations ?? 1})
-
-Tasks Mode: ENABLED - Work on one task at a time from ralph-tasks.md
-
-Now, work on the current task. Good luck!
-`.trim();
+    return buildTasksModePrompt(state);
   }
 
-  return `
-# Ralph Wiggum Loop - Iteration ${state.iteration}
+  return buildRegularPrompt(state);
+}
 
-You are in an iterative development loop. Work on the task below until you can genuinely complete it.
-${contextSection}
-## Your Task
+/**
+ * Composes all sections for tasks mode (iterative task list).
+ * Section order: header → intro → context → task list → goal → format → rules → iteration → footer
+ */
+function buildTasksModePrompt(state: RalphState): string {
+  const builder = new PromptBuilder();
 
-${state.prompt}
+  builder.addText(buildHeader(state));
+  builder.addText(buildTasksModeIntro());
 
-## Output Format
+  const context = buildContextContent();
+  if (context) {
+    builder.addText(context, "Additional Context (added by user mid-loop)");
+  }
 
-Your response will be parsed as structured JSON with these fields:
-- "completed": Set to true ONLY when the task is genuinely complete
-- "reasoning": Briefly explain why the task is or isn't complete
-- "output": Your actual response text
+  const tasksSection = getTasksModeSection(state);
+  if (tasksSection) {
+    builder.addText(tasksSection);
+  }
 
-The system will check the "completed" field to detect task completion.
+  builder.addText(state.prompt, "Your Main Goal");
 
-## Instructions
+  builder.addText(buildOutputFormatIntro(), "Output Format");
+  builder.addList(buildOutputFormatItems());
+  builder.addText(buildOutputFormatFooter());
 
-1. Read the current state of files to understand what's been done
-2. Track your progress and plan remaining work
-3. Make progress on the task
-4. Run tests/verification if applicable
-5. When the task is GENUINELY COMPLETE, set "completed" to true
+  builder.addList(buildCriticalRulesTasksMode(state), "Critical Rules");
+  builder.addText(buildIterationInfoContent(state), "Current Iteration");
+  builder.addText(buildTasksModeFooter());
 
-## Critical Rules
+  return builder.build();
+}
 
-- Set "completed" to true ONLY when the task is truly done
-- Provide brief reasoning in the "reasoning" field about completion status
-- Put your main response text in the "output" field
-- The old <promise> tag format is now OPTIONAL: <promise>${state.completionPromise}</promise>
-- Output promise tags DIRECTLY - do not quote them, explain it, or say you "will" output it
-- Do NOT lie or output false promises to exit the loop
-- If stuck, try a different approach
-- Check your work before claiming completion
-- The loop will continue until you succeed
+/**
+ * Composes all sections for regular mode (single task).
+ * Section order: header → iteration → intro → context → task → format → instructions → rules → footer
+ */
+function buildRegularPrompt(state: RalphState): string {
+  const builder = new PromptBuilder();
 
-## Current Iteration: ${state.iteration}${state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)"} (min: ${state.minIterations ?? 1})
+  builder.addText(buildHeader(state));
+  builder.addText(buildIterationInfoContent(state), "Current Iteration");
+  builder.addText(buildRegularModeIntro());
 
-Now, work on the task. Good luck!
-`.trim();
+  const context = buildContextContent();
+  if (context) {
+    builder.addText(context, "Additional Context (added by user mid-loop)");
+  }
+
+  builder.addText(state.prompt, "Your Task");
+
+  builder.addText(buildOutputFormatIntro(), "Output Format");
+  builder.addList(buildOutputFormatItems());
+  builder.addText(buildOutputFormatFooter());
+
+  builder.addText(buildInstructionsContent(), "Instructions");
+  builder.addList(buildCriticalRulesRegularMode(state), "Critical Rules");
+  builder.addText(buildRegularModeFooter());
+
+  return builder.build();
 }
