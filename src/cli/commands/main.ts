@@ -8,9 +8,9 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import type { Command } from "commander";
-import { createSdkClient, closeSdkServer, type SdkClient } from "../../sdk/client";
+import { createSdkClient, closeSdkServer, type SdkClient, type SdkClientOptions } from "../../sdk/client";
 import type { RalphState } from "../../state/state";
-import { runRalphLoop } from "../../loop/loop";
+import { runRalphLoop, type LoopOptions } from "../../loop/loop";
 import { readPromptFile } from "../../io/files";
 import { buildPrompt } from "../../prompts/prompts";
 import { checkAgentExists, formatAgentList } from "../../sdk/agents";
@@ -81,10 +81,10 @@ export async function mainCommandAction(this: Command): Promise<void> {
   } else if (opts.prompt) {
     // Explicit prompt option
     prompt = opts.prompt;
-  } else if (promptParts.length === 1 && existsSync(promptParts[0])) {
+  } else if (promptParts.length === 1 && existsSync(promptParts[0]!)) {
     // Single argument that is a file path
-    promptSource = promptParts[0];
-    prompt = readPromptFile(promptParts[0]);
+    promptSource = promptParts[0]!;
+    prompt = readPromptFile(promptParts[0]!);
   } else {
     // Join remaining args as prompt
     prompt = promptParts.join(" ");
@@ -181,11 +181,14 @@ async function executeMainWorkflow(opts: MainCommandOptions, prompt: string): Pr
     // Determine permission mode
     const allowAllPermissions = opts.allowAll && !opts.allowAllExplicit;
 
-    sdkClient = await createSdkClient({
-      model: opts.model,
+    const sdkOptions: SdkClientOptions = {
       filterPlugins: !opts.plugins,
       allowAllPermissions,
-    });
+    };
+    if (opts.model !== undefined) {
+      sdkOptions.model = opts.model;
+    }
+    sdkClient = await createSdkClient(sdkOptions);
 
     console.log(`✅ SDK client ready (${sdkClient.server.url})`);
 
@@ -211,20 +214,20 @@ async function executeMainWorkflow(opts: MainCommandOptions, prompt: string): Pr
   try {
     const allowAllPermissions = opts.allowAll && !opts.allowAllExplicit;
 
-    await runRalphLoop({
+    const loopOptions: LoopOptions = {
       prompt,
-      promptTemplatePath: opts.promptTemplate,
-      model: opts.model,
-      supervisorModel: opts.supervisorModel,
+      promptTemplatePath: opts.promptTemplate ?? "",
+      model: opts.model ?? "",
+      supervisorModel: opts.supervisorModel ?? "",
       supervisorEnabled: opts.supervisor,
       supervisorNoActionPromise: opts.supervisorNoActionPromise,
       supervisorSuggestionPromise: opts.supervisorSuggestionPromise,
       supervisorMemoryLimit: opts.supervisorMemoryLimit,
-      supervisorPromptTemplatePath: opts.supervisorPromptTemplate,
+      supervisorPromptTemplatePath: opts.supervisorPromptTemplate ?? "",
       minIterations: opts.minIterations,
       maxIterations: opts.maxIterations,
       completionPromise: opts.completionPromise,
-      abortPromise: opts.abortPromise,
+      abortPromise: opts.abortPromise ?? "",
       tasksMode: opts.tasks,
       taskPromise: opts.taskPromise,
       streamOutput: opts.stream,
@@ -233,21 +236,24 @@ async function executeMainWorkflow(opts: MainCommandOptions, prompt: string): Pr
       disablePlugins: !opts.plugins,
       allowAllPermissions,
       silent: opts.silent,
-      agent: opts.agent,
       sdkClient,
       verificationCommands: verification.commands,
       verificationMode: verification.mode,
       verificationTimeoutMs: verification.timeoutMs,
       verificationFailFast: verification.failFast,
       verificationMaxOutputChars: verification.maxOutputChars,
-    });
+    };
+    if (opts.agent !== undefined) {
+      loopOptions.agent = opts.agent;
+    }
+    await runRalphLoop(loopOptions);
   } catch (error) {
     console.error("Fatal error:", error);
     process.exit(1);
   } finally {
     if (sdkClient) {
       try {
-        await closeSdkServer(sdkClient.server, 5000, true);
+        await closeSdkServer(sdkClient.server, true);
       } catch {
         // Ignore cleanup errors
       }

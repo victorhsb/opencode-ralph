@@ -36,7 +36,7 @@ function configureProgram(program: Command): Command {
   program
     .name("ralph")
     .description("Ralph Wiggum Loop - Iterative AI development with OpenCode")
-    .version(process.env.npm_package_version || "2.0.1", "-v, --version");
+    .version(process.env["npm_package_version"] || "2.0.1", "-v, --version");
 
   // Main options from RALPH_ARGS_SCHEMA
   program
@@ -76,8 +76,8 @@ function configureProgram(program: Command): Command {
     const opts = thisCommand.opts();
 
     // Validate supervisor-memory-limit
-    if (opts.supervisorMemoryLimit !== undefined) {
-      const limit = parseInt(String(opts.supervisorMemoryLimit), 10);
+    if (opts["supervisorMemoryLimit"] !== undefined) {
+      const limit = parseInt(String(opts["supervisorMemoryLimit"]), 10);
       if (isNaN(limit) || limit <= 0) {
         console.error("Error: --supervisor-memory-limit must be greater than 0");
         process.exit(1);
@@ -85,8 +85,8 @@ function configureProgram(program: Command): Command {
     }
 
     // Validate min-iterations
-    if (opts.minIterations !== undefined) {
-      const min = parseInt(String(opts.minIterations), 10);
+    if (opts["minIterations"] !== undefined) {
+      const min = parseInt(String(opts["minIterations"]), 10);
       if (isNaN(min) || min < 0) {
         console.error("Error: --min-iterations must be non-negative");
         process.exit(1);
@@ -94,29 +94,29 @@ function configureProgram(program: Command): Command {
     }
 
     // Validate max-iterations
-    if (opts.maxIterations !== undefined) {
-      const max = parseInt(String(opts.maxIterations), 10);
+    if (opts["maxIterations"] !== undefined) {
+      const max = parseInt(String(opts["maxIterations"]), 10);
       if (isNaN(max) || max < 0) {
         console.error("Error: --max-iterations must be non-negative");
         process.exit(1);
       }
     }
 
-    if (opts.verifyMode !== undefined && !["on-claim", "every-iteration"].includes(String(opts.verifyMode))) {
+    if (opts["verifyMode"] !== undefined && !["on-claim", "every-iteration"].includes(String(opts["verifyMode"]))) {
       console.error("Error: --verify-mode must be one of: on-claim, every-iteration");
       process.exit(1);
     }
 
-    if (opts.verifyTimeoutMs !== undefined) {
-      const timeout = parseInt(String(opts.verifyTimeoutMs), 10);
+    if (opts["verifyTimeoutMs"] !== undefined) {
+      const timeout = parseInt(String(opts["verifyTimeoutMs"]), 10);
       if (isNaN(timeout) || timeout <= 0) {
         console.error("Error: --verify-timeout-ms must be greater than 0");
         process.exit(1);
       }
     }
 
-    if (opts.verifyMaxOutputChars !== undefined) {
-      const maxChars = parseInt(String(opts.verifyMaxOutputChars), 10);
+    if (opts["verifyMaxOutputChars"] !== undefined) {
+      const maxChars = parseInt(String(opts["verifyMaxOutputChars"]), 10);
       if (isNaN(maxChars) || maxChars < 200) {
         console.error("Error: --verify-max-output-chars must be at least 200");
         process.exit(1);

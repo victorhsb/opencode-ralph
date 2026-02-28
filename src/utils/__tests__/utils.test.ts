@@ -393,19 +393,19 @@ describe("extractErrors", () => {
   test("limits to first 10 errors", () => {
     const output = Array(15).fill(0).map((_, i) => `Error: Error ${i}`).join("\n");
     const errors = extractErrors(output);
-    expect(errors.length).toBe(10);
+    expect(errors).toHaveLength(10);
   });
 
   test("removes duplicates", () => {
     const output = "Error: Duplicate\nSome text\nError: Duplicate";
     const errors = extractErrors(output);
-    expect(errors.filter(e => e === "Error: Duplicate").length).toBe(1);
+    expect(errors.filter((e: string) => e === "Error: Duplicate").length).toBe(1);
   });
 
   test("trims lines to 200 characters", () => {
     const longError = "Error: " + "x".repeat(250);
     const errors = extractErrors(longError);
-    expect(errors[0].length).toBeLessThanOrEqual(200);
+    expect(errors[0]!.length).toBeLessThanOrEqual(200);
   });
 
   test("handles empty output", () => {

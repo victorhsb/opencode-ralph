@@ -90,7 +90,9 @@ export function suggestionApproveAction(id: string): void {
     console.log(`✅ Suggestion ${id} approved and applied`);
   } else {
     suggestion.status = "failed";
-    suggestion.error = applied.error;
+    if (applied.error !== undefined) {
+      suggestion.error = applied.error;
+    }
     saveSupervisorSuggestions(store);
     console.error(`❌ Suggestion ${id} approved but failed to apply: ${applied.error}`);
     process.exit(1);

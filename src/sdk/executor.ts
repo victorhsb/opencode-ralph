@@ -297,13 +297,13 @@ function parseSdkEvent(event: unknown): SdkEvent {
   }
 
   const eventObj = event as Record<string, unknown>;
-  const eventType = typeof eventObj.type === "string" ? eventObj.type : "";
-  const props = (eventObj.properties || {}) as Record<string, unknown>;
+  const eventType = typeof eventObj['type'] === "string" ? eventObj['type'] : "";
+  const props = (eventObj['properties'] || {}) as Record<string, unknown>;
 
   // Handle message.part.delta - streaming text chunks
   if (eventType === "message.part.delta") {
-    const delta = typeof props.delta === "string" ? props.delta : "";
-    const field = typeof props.field === "string" ? props.field : "";
+    const delta = typeof props['delta'] === "string" ? props['delta'] : "";
+    const field = typeof props['field'] === "string" ? props['field'] : "";
 
     // Only process text deltas, not other field types
     if (field === "text" && delta) {
@@ -323,14 +323,14 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
   // Handle message.part.updated - complete parts
   if (eventType === "message.part.updated") {
-    const part = (props.part || {}) as Record<string, unknown>;
-    const partType = typeof part.type === "string" ? part.type : "";
+    const part = (props['part'] || {}) as Record<string, unknown>;
+    const partType = typeof part['type'] === "string" ? part['type'] : "";
 
     // Handle tool parts
     if (partType === "tool") {
-      const toolName = typeof part.tool === "string" ? part.tool : "unknown";
-      const state = (part.state || {}) as Record<string, unknown>;
-      const status = typeof state.status === "string" ? state.status : "";
+      const toolName = typeof part['tool'] === "string" ? part['tool'] : "unknown";
+      const state = (part['state'] || {}) as Record<string, unknown>;
+      const status = typeof state['status'] === "string" ? state['status'] : "";
 
       // Tool is starting (running state)
       if (status === "running") {
@@ -344,14 +344,14 @@ function parseSdkEvent(event: unknown): SdkEvent {
       // Tool completed
       if (status === "completed") {
         const toolResult: SdkEvent["result"] = {};
-        if (state.input !== undefined && typeof state.input === "object" && state.input !== null) {
-          toolResult.input = state.input as Record<string, unknown>;
+        if (state['input'] !== undefined && typeof state['input'] === "object" && state['input'] !== null) {
+          toolResult.input = state['input'] as Record<string, unknown>;
         }
-        if (typeof state.output === "string") {
-          toolResult.output = state.output;
+        if (typeof state['output'] === "string") {
+          toolResult.output = state['output'];
         }
-        if (typeof state.title === "string") {
-          toolResult.title = state.title;
+        if (typeof state['title'] === "string") {
+          toolResult.title = state['title'];
         }
         return {
           type: "tool_end",
@@ -364,8 +364,8 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
     // Handle text parts from assistant
     if (partType === "text") {
-      const text = typeof part.text === "string" ? part.text : "";
-      const role = typeof part.role === "string" ? part.role : "";
+      const text = typeof part['text'] === "string" ? part['text'] : "";
+      const role = typeof part['role'] === "string" ? part['role'] : "";
       // Only include if it's from assistant and has content
       if (text && role === "assistant") {
         return {
@@ -378,7 +378,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
     // Handle reasoning/thinking
     if (partType === "reasoning" || partType === "thinking") {
-      const text = typeof part.text === "string" ? part.text : "";
+      const text = typeof part['text'] === "string" ? part['text'] : "";
       if (text) {
         return {
           type: "thinking",
@@ -391,20 +391,20 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
   // Handle session errors
   if (eventType === "session.error") {
-    const error = (props.error || {}) as Record<string, unknown>;
+    const error = (props['error'] || {}) as Record<string, unknown>;
     let errorMessage = "Unknown error";
 
     // Try to get message from error.data.message
-    if (typeof error.data === "object" && error.data !== null) {
-      const errorData = error.data as Record<string, unknown>;
-      if (typeof errorData.message === "string") {
-        errorMessage = errorData.message;
+    if (typeof error['data'] === "object" && error['data'] !== null) {
+      const errorData = error['data'] as Record<string, unknown>;
+      if (typeof errorData['message'] === "string") {
+        errorMessage = errorData['message'];
       }
     }
 
     // Fall back to error.message if no data.message
-    if (errorMessage === "Unknown error" && typeof error.message === "string") {
-      errorMessage = error.message;
+    if (errorMessage === "Unknown error" && typeof error['message'] === "string") {
+      errorMessage = error['message'];
     }
 
     return {
@@ -441,29 +441,29 @@ function extractOutputFromMessage(
   const output: string[] = [];
 
   // Handle SDK response structure: { info: AssistantMessage, parts: Part[] }
-  if (Array.isArray(msg.parts)) {
-    for (const part of msg.parts) {
+  if (Array.isArray(msg['parts'])) {
+    for (const part of msg['parts']) {
       if (typeof part === "object" && part !== null) {
         const partObj = part as Record<string, unknown>;
 
         // Text content
-        if (partObj.type === "text" && typeof partObj.text === "string") {
-          output.push(partObj.text);
+        if (partObj['type'] === "text" && typeof partObj['text'] === "string") {
+          output.push(partObj['text']);
         }
 
         // Thinking content (optional - can be included for debugging)
         if (
-          partObj.type === "thinking" &&
-          typeof partObj.thinking === "string"
+          partObj['type'] === "thinking" &&
+          typeof partObj['thinking'] === "string"
         ) {
-          output.push(`[Thinking: ${partObj.thinking}]`);
+          output.push(`[Thinking: ${partObj['thinking']}]`);
         }
 
         // Tool results (show summary)
-        if (partObj.type === "tool" && typeof partObj.tool === "string") {
-          const state = (partObj.state || {}) as Record<string, unknown>;
-          if (state.status === "completed") {
-            output.push(`[Tool ${partObj.tool} executed]`);
+        if (partObj['type'] === "tool" && typeof partObj['tool'] === "string") {
+          const state = (partObj['state'] || {}) as Record<string, unknown>;
+          if (state['status'] === "completed") {
+            output.push(`[Tool ${partObj['tool']} executed]`);
           }
         }
       }
@@ -471,29 +471,29 @@ function extractOutputFromMessage(
   }
 
   // Extract from content array (legacy format)
-  if (output.length === 0 && Array.isArray(msg.content)) {
-    for (const part of msg.content) {
+  if (output.length === 0 && Array.isArray(msg['content'])) {
+    for (const part of msg['content']) {
       if (typeof part === "object" && part !== null) {
         const partObj = part as Record<string, unknown>;
 
         // Text content
-        if (partObj.type === "text" && typeof partObj.text === "string") {
-          output.push(partObj.text);
+        if (partObj['type'] === "text" && typeof partObj['text'] === "string") {
+          output.push(partObj['text']);
         }
 
         // Thinking content (optional - can be included for debugging)
         if (
-          partObj.type === "thinking" &&
-          typeof partObj.thinking === "string"
+          partObj['type'] === "thinking" &&
+          typeof partObj['thinking'] === "string"
         ) {
-          output.push(`[Thinking: ${partObj.thinking}]`);
+          output.push(`[Thinking: ${partObj['thinking']}]`);
         }
 
         // Tool results (show summary)
-        if (partObj.type === "tool" && typeof partObj.tool === "string") {
-          const state = (partObj.state || {}) as Record<string, unknown>;
-          if (state.status === "completed") {
-            output.push(`[Tool ${partObj.tool} executed]`);
+        if (partObj['type'] === "tool" && typeof partObj['tool'] === "string") {
+          const state = (partObj['state'] || {}) as Record<string, unknown>;
+          if (state['status'] === "completed") {
+            output.push(`[Tool ${partObj['tool']} executed]`);
           }
         }
       }
@@ -501,8 +501,8 @@ function extractOutputFromMessage(
   }
 
   // Fallback: try to extract from text field directly
-  if (output.length === 0 && typeof msg.text === "string") {
-    output.push(msg.text);
+  if (output.length === 0 && typeof msg['text'] === "string") {
+    output.push(msg['text']);
   }
 
   return output.join("\n");
@@ -524,12 +524,12 @@ function extractStructuredOutput(
   const msg = message as Record<string, unknown>;
 
   // Navigate through the response structure: info.structured_output
-  const info = msg.info as Record<string, unknown> | undefined;
+  const info = msg['info'] as Record<string, unknown> | undefined;
   if (!info) {
     return undefined;
   }
 
-  const structuredOutput = info.structured_output;
+  const structuredOutput = info['structured_output'];
   if (!structuredOutput || typeof structuredOutput !== "object") {
     return undefined;
   }
@@ -537,22 +537,22 @@ function extractStructuredOutput(
   const so = structuredOutput as Record<string, unknown>;
 
   // Validate the required 'completed' field
-  if (typeof so.completed !== "boolean") {
+  if (typeof so['completed'] !== "boolean") {
     return undefined;
   }
 
   // Build the structured output object
   const result: StructuredOutput = {
-    completed: so.completed,
+    completed: so['completed'],
   };
 
   // Add optional fields if present
-  if (typeof so.reasoning === "string") {
-    result.reasoning = so.reasoning;
+  if (typeof so['reasoning'] === "string") {
+    result.reasoning = so['reasoning'];
   }
 
-  if (typeof so.output === "string") {
-    result.output = so.output;
+  if (typeof so['output'] === "string") {
+    result.output = so['output'];
   }
 
   return result;

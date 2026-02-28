@@ -32,9 +32,9 @@ describe("parseTasks", () => {
     const tasks = parseTasks(content);
 
     expect(tasks).toHaveLength(1);
-    expect(tasks[0].text).toBe("Task 1");
-    expect(tasks[0].status).toBe("todo");
-    expect(tasks[0].subtasks).toHaveLength(0);
+    expect(tasks[0]!.text).toBe("Task 1");
+    expect(tasks[0]!.status).toBe("todo");
+    expect(tasks[0]!.subtasks).toHaveLength(0);
   });
 
   test("parses single in-progress task", () => {
@@ -42,8 +42,8 @@ describe("parseTasks", () => {
     const tasks = parseTasks(content);
 
     expect(tasks).toHaveLength(1);
-    expect(tasks[0].text).toBe("Task in progress");
-    expect(tasks[0].status).toBe("in-progress");
+    expect(tasks[0]!.text).toBe("Task in progress");
+    expect(tasks[0]!.status).toBe("in-progress");
   });
 
   test("parses single complete task", () => {
@@ -51,8 +51,8 @@ describe("parseTasks", () => {
     const tasks = parseTasks(content);
 
     expect(tasks).toHaveLength(1);
-    expect(tasks[0].text).toBe("Task done");
-    expect(tasks[0].status).toBe("complete");
+    expect(tasks[0]!.text).toBe("Task done");
+    expect(tasks[0]!.status).toBe("complete");
   });
 
   test("parses multiple tasks", () => {
@@ -60,9 +60,9 @@ describe("parseTasks", () => {
     const tasks = parseTasks(content);
 
     expect(tasks).toHaveLength(3);
-    expect(tasks[0].status).toBe("todo");
-    expect(tasks[1].status).toBe("complete");
-    expect(tasks[2].status).toBe("in-progress");
+    expect(tasks[0]!.status).toBe("todo");
+    expect(tasks[1]!.status).toBe("complete");
+    expect(tasks[2]!.status).toBe("in-progress");
   });
 
   test("parses task with subtasks", () => {
@@ -70,12 +70,12 @@ describe("parseTasks", () => {
     const tasks = parseTasks(content);
 
     expect(tasks).toHaveLength(1);
-    expect(tasks[0].text).toBe("Main task");
-    expect(tasks[0].subtasks).toHaveLength(2);
-    expect(tasks[0].subtasks[0].text).toBe("Subtask 1");
-    expect(tasks[0].subtasks[1].text).toBe("Subtask 2");
-    expect(tasks[0].subtasks[0].status).toBe("todo");
-    expect(tasks[0].subtasks[1].status).toBe("complete");
+    expect(tasks[0]!.text).toBe("Main task");
+    expect(tasks[0]!.subtasks).toHaveLength(2);
+    expect(tasks[0]!.subtasks[0]!.text).toBe("Subtask 1");
+    expect(tasks[0]!.subtasks[1]!.text).toBe("Subtask 2");
+    expect(tasks[0]!.subtasks[0]!.status).toBe("todo");
+    expect(tasks[0]!.subtasks[1]!.status).toBe("complete");
   });
 
   test("parses multiple tasks with subtasks", () => {
@@ -83,9 +83,9 @@ describe("parseTasks", () => {
     const tasks = parseTasks(content);
 
     expect(tasks).toHaveLength(2);
-    expect(tasks[0].subtasks).toHaveLength(1);
-    expect(tasks[1].subtasks).toHaveLength(2);
-    expect(tasks[1].subtasks[1].status).toBe("in-progress");
+    expect(tasks[0]!.subtasks).toHaveLength(1);
+    expect(tasks[1]!.subtasks).toHaveLength(2);
+    expect(tasks[1]!.subtasks[1]!.status).toBe("in-progress");
   });
 
   test("ignores non-task lines", () => {
@@ -93,8 +93,8 @@ describe("parseTasks", () => {
     const tasks = parseTasks(content);
 
     expect(tasks).toHaveLength(2);
-    expect(tasks[0].text).toBe("Real task");
-    expect(tasks[1].text).toBe("Another task");
+    expect(tasks[0]!.text).toBe("Real task");
+    expect(tasks[1]!.text).toBe("Another task");
   });
 
   test("handles task text with special characters", () => {
@@ -102,8 +102,8 @@ describe("parseTasks", () => {
     const tasks = parseTasks(content);
 
     expect(tasks).toHaveLength(2);
-    expect(tasks[0].text).toBe('Task with (parentheses) and [brackets]');
-    expect(tasks[1].text).toBe('Task with "quotes" and \'apostrophes\'');
+    expect(tasks[0]!.text).toBe('Task with (parentheses) and [brackets]');
+    expect(tasks[1]!.text).toBe('Task with "quotes" and \'apostrophes\'');
   });
 
   test("handles task text with colons and pipes", () => {
@@ -111,15 +111,15 @@ describe("parseTasks", () => {
     const tasks = parseTasks(content);
 
     expect(tasks).toHaveLength(2);
-    expect(tasks[0].text).toBe("Task: with | separators");
-    expect(tasks[1].text).toBe("Another: task|test");
+    expect(tasks[0]!.text).toBe("Task: with | separators");
+    expect(tasks[1]!.text).toBe("Another: task|test");
   });
 
   test("preserves original line in task object", () => {
     const content = "- [ ] Original line\n";
     const tasks = parseTasks(content);
 
-    expect(tasks[0].originalLine).toBe("- [ ] Original line");
+    expect(tasks[0]!.originalLine).toBe("- [ ] Original line");
   });
 
   test("handles empty lines between tasks", () => {
@@ -133,9 +133,9 @@ describe("parseTasks", () => {
     const content = "- [ ] Main\n  - [ ] Sub 1\n  - [ ] Sub 2\n";
     const tasks = parseTasks(content);
 
-    expect(tasks[0].subtasks).toHaveLength(2);
-    expect(tasks[0].subtasks[0].originalLine).toBe("  - [ ] Sub 1");
-    expect(tasks[0].subtasks[1].originalLine).toBe("  - [ ] Sub 2");
+    expect(tasks[0]!.subtasks).toHaveLength(2);
+    expect(tasks[0]!.subtasks[0]!.originalLine).toBe("  - [ ] Sub 1");
+    expect(tasks[0]!.subtasks[1]!.originalLine).toBe("  - [ ] Sub 2");
   });
 });
 
@@ -393,9 +393,9 @@ describe("Task round-trip operations", () => {
     const reparsedTasks = parseTasks(convertedMarkdown);
 
     expect(parsedTasks.length).toBe(reparsedTasks.length);
-    expect(parsedTasks[0].text).toBe(reparsedTasks[0].text);
-    expect(parsedTasks[0].status).toBe(reparsedTasks[0].status);
-    expect(parsedTasks[0].subtasks.length).toBe(reparsedTasks[0].subtasks.length);
+    expect(parsedTasks[0]!.text).toBe(reparsedTasks[0]!.text);
+    expect(parsedTasks[0]!.status).toBe(reparsedTasks[0]!.status);
+    expect(parsedTasks[0]!.subtasks.length).toBe(reparsedTasks[0]!.subtasks.length);
   });
 
   test("handles complex task hierarchy", () => {
@@ -413,8 +413,8 @@ describe("Task round-trip operations", () => {
     const tasks = parseTasks(markdown);
 
     expect(tasks).toHaveLength(3);
-    expect(tasks[0].subtasks).toHaveLength(3);
-    expect(tasks[0].subtasks[1].status).toBe("in-progress");
-    expect(tasks[2].subtasks).toHaveLength(1);
+    expect(tasks[0]!.subtasks).toHaveLength(3);
+    expect(tasks[0]!.subtasks[1]!.status).toBe("in-progress");
+    expect(tasks[2]!.subtasks).toHaveLength(1);
   });
 });

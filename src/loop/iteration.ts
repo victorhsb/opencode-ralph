@@ -120,7 +120,7 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
       toolCounts,
       exitCode: result.exitCode,
       errors,
-      structuredOutput: result.structuredOutput,
+      ...(result.structuredOutput !== undefined && { structuredOutput: result.structuredOutput }),
     };
   } catch (error) {
     clearInterval(heartbeatTimer);

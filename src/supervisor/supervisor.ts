@@ -97,8 +97,9 @@ export function parseSupervisorMemory(path?: string): SupervisorMemoryEntry[] {
     const header = lines[0].replace(/^##\s+/, "").trim();
     const headerMatch = header.match(/^(.+?)\s+\|\s+Iteration\s+(\d+)$/i);
     if (!headerMatch) continue;
-    const timestamp = headerMatch[1].trim();
-    const iteration = parseInt(headerMatch[2], 10);
+    const timestamp = headerMatch[1]?.trim();
+    const iteration = parseInt(headerMatch[2] ?? "0", 10);
+    if (timestamp === undefined) continue;
     const summaryLine = lines.find(line => line.startsWith("- Summary: "));
     const decisionLine = lines.find(line => line.startsWith("- Decision: "));
     if (!summaryLine || !decisionLine || Number.isNaN(iteration)) continue;
@@ -166,7 +167,7 @@ export function displaySupervisorSuggestions(store: SupervisorSuggestionsStore):
 export function applyApprovedSuggestion(suggestion: SupervisorSuggestion): { ok: boolean; error?: string } {
   try {
     if (suggestion.kind === "add_task") {
-      const taskText = suggestion.proposedChanges.task ?? suggestion.details;
+      const taskText = suggestion.proposedChanges["task"] ?? suggestion.details;
       if (!taskText?.trim()) {
         return { ok: false, error: "missing task text in suggestion payload" };
       }
@@ -174,7 +175,7 @@ export function applyApprovedSuggestion(suggestion: SupervisorSuggestion): { ok:
       return { ok: true };
     }
     if (suggestion.kind === "add_context") {
-      const contextText = suggestion.proposedChanges.context ?? suggestion.details;
+      const contextText = suggestion.proposedChanges["context"] ?? suggestion.details;
       if (!contextText?.trim()) {
         return { ok: false, error: "missing context text in suggestion payload" };
       }
@@ -319,7 +320,7 @@ export function parseSupervisorOutput(
   }
 
   try {
-    const parsed = JSON.parse(match[1]);
+    const parsed = JSON.parse(match[1] ?? "{}");
     const kind = parsed?.kind;
     const title = typeof parsed?.title === "string" ? parsed.title.trim() : "";
     const details = typeof parsed?.details === "string" ? parsed.details.trim() : "";
@@ -333,10 +334,10 @@ export function parseSupervisorOutput(
     if (!title) {
       return { ok: false, noAction: false, rawOutput: output, error: "suggestion title is required" };
     }
-    if (kind === "add_task" && !proposedChanges.task?.trim()) {
+    if (kind === "add_task" && !proposedChanges["task"]?.trim()) {
       return { ok: false, noAction: false, rawOutput: output, error: "add_task suggestion requires proposedChanges.task" };
     }
-    if (kind === "add_context" && !proposedChanges.context?.trim()) {
+    if (kind === "add_context" && !proposedChanges["context"]?.trim()) {
       return { ok: false, noAction: false, rawOutput: output, error: "add_context suggestion requires proposedChanges.context" };
     }
 

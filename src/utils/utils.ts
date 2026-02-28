@@ -208,14 +208,14 @@ export function getSdkErrorMessage(error: unknown): string {
   }
   if (error && typeof error === "object") {
     const err = error as Record<string, unknown>;
-    if (typeof err.message === "string") {
-      return err.message;
+    if (typeof err["message"] === "string") {
+      return err["message"];
     }
-    if (typeof err.error === "string") {
-      return err.error;
+    if (typeof err["error"] === "string") {
+      return err["error"];
     }
-    if (typeof err.description === "string") {
-      return err.description;
+    if (typeof err["description"] === "string") {
+      return err["description"];
     }
     try {
       return JSON.stringify(error);

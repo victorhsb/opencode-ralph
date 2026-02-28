@@ -39,8 +39,8 @@ describe("formatAgentList", () => {
     expect(lines.length).toBe(2);
     // The description separator (" - ") should start at the same position
     // indicating names are properly aligned
-    const descStartPos0 = lines[0].indexOf(" - ");
-    const descStartPos1 = lines[1].indexOf(" - ");
+    const descStartPos0 = lines[0]!.indexOf(" - ");
+    const descStartPos1 = lines[1]!.indexOf(" - ");
     expect(descStartPos0).toBe(descStartPos1);
     expect(descStartPos0).toBeGreaterThan(2); // After the 2-space indent
   });

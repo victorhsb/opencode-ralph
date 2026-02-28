@@ -70,7 +70,7 @@ function getConfig(envVar: string | undefined, defaultValue: number): number {
  * Can be overridden via RALPH_SUPERVISOR_POLL_INTERVAL environment variable (for testing).
  */
 export function getSupervisorPollInterval(): number {
-  return getConfig(process.env.RALPH_SUPERVISOR_POLL_INTERVAL, SUPERVISOR_DECISION_POLL_INTERVAL_MS);
+  return getConfig(process.env["RALPH_SUPERVISOR_POLL_INTERVAL"], SUPERVISOR_DECISION_POLL_INTERVAL_MS);
 }
 
 /**

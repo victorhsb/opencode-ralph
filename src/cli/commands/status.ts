@@ -228,7 +228,7 @@ function displayTasks(tasksPath: string): void {
     console.log(`\n📋 CURRENT TASKS:`);
 
     for (let i = 0; i < tasks.length; i++) {
-      const task = tasks[i];
+      const task = tasks[i]!;
       const statusIcon = task.status === "complete" ? "✅" : task.status === "in-progress" ? "🔄" : "⏸️";
       console.log(`   ${i + 1}. ${statusIcon} ${task.text}`);
 

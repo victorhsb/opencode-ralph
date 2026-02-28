@@ -301,11 +301,11 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         client: sdkClient,
         prompt: fullPrompt,
         model: currentModel,
-        agent,
         streamOutput,
         compactTools: !verboseTools,
-        silent,
         useStructuredOutput: true,
+        ...(agent !== undefined && { agent }),
+        ...(silent !== undefined && { silent }),
       });
 
       const result = sdkResult.output;

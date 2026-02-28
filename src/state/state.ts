@@ -149,13 +149,13 @@ function backupCorruptedFile(filePath: string): void {
 
   try {
     renameSync(filePath, backupPath);
-  } catch (e) {
+  } catch (e: unknown) {
     console.warn(`Warning: Failed to backup corrupted state file: ${e}`);
   }
 }
 
 function formatZodError(error: z.ZodError): string {
-  return error.errors
+  return error.issues
     .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
     .join("\n") || "Validation failed with no specific errors";
 }
@@ -168,30 +168,30 @@ function migrateState(raw: unknown): unknown {
   const state = raw as Record<string, unknown>;
 
   if (!("version" in state)) {
-    state.version = 1;
+    state["version"] = 1;
   }
 
   // Ensure nested supervisor objects have all required fields
-  if ("supervisor" in state && state.supervisor !== null && typeof state.supervisor === "object") {
-    const supervisor = state.supervisor as Record<string, unknown>;
-    if (!("enabled" in supervisor)) supervisor.enabled = false;
-    if (!("model" in supervisor)) supervisor.model = "";
-    if (!("noActionPromise" in supervisor)) supervisor.noActionPromise = "CONTINUE";
-    if (!("suggestionPromise" in supervisor)) supervisor.suggestionPromise = "SUGGEST";
-    if (!("memoryLimit" in supervisor)) supervisor.memoryLimit = 50;
+  if ("supervisor" in state && state["supervisor"] !== null && typeof state["supervisor"] === "object") {
+    const supervisor = state["supervisor"] as Record<string, unknown>;
+    if (!("enabled" in supervisor)) supervisor["enabled"] = false;
+    if (!("model" in supervisor)) supervisor["model"] = "";
+    if (!("noActionPromise" in supervisor)) supervisor["noActionPromise"] = "CONTINUE";
+    if (!("suggestionPromise" in supervisor)) supervisor["suggestionPromise"] = "SUGGEST";
+    if (!("memoryLimit" in supervisor)) supervisor["memoryLimit"] = 50;
   }
 
-  if ("supervisorState" in state && state.supervisorState !== null && typeof state.supervisorState === "object") {
-    const supervisorState = state.supervisorState as Record<string, unknown>;
-    if (!("enabled" in supervisorState)) supervisorState.enabled = false;
-    if (!("pausedForDecision" in supervisorState)) supervisorState.pausedForDecision = false;
+  if ("supervisorState" in state && state["supervisorState"] !== null && typeof state["supervisorState"] === "object") {
+    const supervisorState = state["supervisorState"] as Record<string, unknown>;
+    if (!("enabled" in supervisorState)) supervisorState["enabled"] = false;
+    if (!("pausedForDecision" in supervisorState)) supervisorState["pausedForDecision"] = false;
   }
 
-  if ("verification" in state && state.verification !== null && typeof state.verification === "object") {
-    const verification = state.verification as Record<string, unknown>;
-    if (!("enabled" in verification)) verification.enabled = false;
-    if (!("mode" in verification)) verification.mode = "on-claim";
-    if (!("commands" in verification)) verification.commands = [];
+  if ("verification" in state && state["verification"] !== null && typeof state["verification"] === "object") {
+    const verification = state["verification"] as Record<string, unknown>;
+    if (!("enabled" in verification)) verification["enabled"] = false;
+    if (!("mode" in verification)) verification["mode"] = "on-claim";
+    if (!("commands" in verification)) verification["commands"] = [];
   }
 
   return state;

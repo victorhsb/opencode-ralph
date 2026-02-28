@@ -182,10 +182,10 @@ export function formatToolResult(
 
   // Extract file path from input if available
   const input = result.input || {};
-  const filePath = typeof input.filePath === "string"
-    ? input.filePath
-    : typeof input.path === "string"
-      ? input.path
+  const filePath = typeof input['filePath'] === "string"
+    ? input['filePath']
+    : typeof input['path'] === "string"
+      ? input['path']
       : undefined;
 
   // Format based on tool type

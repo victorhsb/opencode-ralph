@@ -60,7 +60,7 @@ export async function closeSdkServer(
 }
 
 function parseFakeEventsFromEnv(): unknown[] {
-  const raw = process.env.RALPH_FAKE_EVENTS_JSON;
+  const raw = process.env['RALPH_FAKE_EVENTS_JSON'];
   if (!raw?.trim()) {
     return [{ type: "session.idle" }];
   }
@@ -76,7 +76,7 @@ function parseFakeEventsFromEnv(): unknown[] {
 }
 
 function parseFakePromptPartsFromEnv(defaultOutput: string): Array<{ type: "text"; text: string }> {
-  const raw = process.env.RALPH_FAKE_OUTPUT_PARTS_JSON;
+  const raw = process.env['RALPH_FAKE_OUTPUT_PARTS_JSON'];
   if (!raw?.trim()) {
     return [{ type: "text", text: defaultOutput }];
   }
@@ -89,10 +89,10 @@ function parseFakePromptPartsFromEnv(defaultOutput: string): Array<{ type: "text
         if (
           part &&
           typeof part === "object" &&
-          (part as Record<string, unknown>).type === "text" &&
-          typeof (part as Record<string, unknown>).text === "string"
+          (part as Record<string, unknown>)['type'] === "text" &&
+          typeof (part as Record<string, unknown>)['text'] === "string"
         ) {
-          const text = (part as Record<string, string>).text;
+          const text = (part as Record<string, string>)['text'];
           if (text !== undefined) {
             parts.push({
               type: "text",
@@ -115,7 +115,7 @@ function hasTerminalFakeEvent(events: unknown[]): boolean {
     if (!event || typeof event !== "object") {
       return false;
     }
-    const type = (event as Record<string, unknown>).type;
+    const type = (event as Record<string, unknown>)['type'];
     return type === "session.idle" || type === "session.error";
   });
 }
@@ -150,7 +150,7 @@ function loadPluginsFromConfig(configPath: string): string[] {
  */
 function loadPluginsFromExistingConfigs(): string[] {
   const userConfigPath = join(
-    process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"),
+    process.env['XDG_CONFIG_HOME'] ?? join(process.env['HOME'] ?? "", ".config"),
     "opencode",
     "opencode.json"
   );
@@ -209,8 +209,8 @@ async function findAvailablePort(hostname: string, preferredPort: number): Promi
  * - filterPlugins: SDK config.plugin (filter to auth-only)
  */
 export async function createSdkClient(options: SdkClientOptions): Promise<SdkClient> {
-  if (process.env.RALPH_FAKE_SDK === "1") {
-    const output = process.env.RALPH_FAKE_OUTPUT ?? "<promise>COMPLETE</promise>";
+  if (process.env['RALPH_FAKE_SDK'] === "1") {
+    const output = process.env['RALPH_FAKE_OUTPUT'] ?? "<promise>COMPLETE</promise>";
     const fakeEvents = parseFakeEventsFromEnv();
     const fakeParts = parseFakePromptPartsFromEnv(output);
     const client = {
