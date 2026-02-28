@@ -133,6 +133,154 @@ describe("supervisor cli", () => {
   }, 15000);
 });
 
+describe("verification cli", () => {
+  test("rejects invalid verify-mode", () => {
+    const cwd = makeTempDir();
+    const res = runRalphSync(cwd, ["--verify-mode", "sometimes", "-p", "test", "--dry-run"]);
+    expect(res.exitCode).toBe(1);
+    expect(res.stderr).toContain("--verify-mode must be one of");
+  });
+
+  test("rejects invalid verify-timeout-ms", () => {
+    const cwd = makeTempDir();
+    const res = runRalphSync(cwd, ["--verify-timeout-ms", "0", "-p", "test", "--dry-run"]);
+    expect(res.exitCode).toBe(1);
+    expect(res.stderr).toContain("--verify-timeout-ms must be greater than 0");
+  });
+
+  test("rejects invalid verify-max-output-chars", () => {
+    const cwd = makeTempDir();
+    const res = runRalphSync(cwd, ["--verify-max-output-chars", "199", "-p", "test", "--dry-run"]);
+    expect(res.exitCode).toBe(1);
+    expect(res.stderr).toContain("--verify-max-output-chars must be at least 200");
+  });
+
+  test("dry-run prints verification configuration", () => {
+    const cwd = makeTempDir();
+    const res = runRalphSync(cwd, ["-p", "test", "--dry-run", "--verify", "true", "--verify", "printf ok"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("VERIFICATION CONFIG");
+    expect(res.stdout).toContain("Mode: on-claim");
+    expect(res.stdout).toContain("- true");
+    expect(res.stdout).toContain("- printf ok");
+  });
+
+  test("completion is accepted when verification passes", () => {
+    const cwd = makeTempDir();
+    const res = runRalphSync(
+      cwd,
+      ["-p", "Simple task", "-x", "1", "--no-commit", "--verify", "true"],
+      fakeSdkEnv(),
+    );
+
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("Running verification");
+    expect(res.stdout).toContain("Verification passed");
+    expect(res.stdout).toContain("Completion promise detected");
+  }, 15000);
+
+  test("completion is rejected and loop continues when verification fails", () => {
+    const cwd = makeTempDir();
+    const res = runRalphSync(
+      cwd,
+      ["-p", "Simple task", "-x", "1", "--no-commit", "--verify", "false"],
+      fakeSdkEnv(),
+    );
+
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("Running verification");
+    expect(res.stdout).toContain("Verification failed");
+    expect(res.stdout).toContain("Completion claim rejected");
+    expect(res.stdout).toContain("Max iterations (1) reached");
+  }, 15000);
+
+  test("status shows verification config and recent verify marker", () => {
+    const cwd = makeTempDir();
+    const ralphDir = join(cwd, ".ralph");
+    mkdirSync(ralphDir, { recursive: true });
+
+    writeFileSync(
+      join(ralphDir, "ralph-loop.state.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          active: true,
+          iteration: 2,
+          minIterations: 1,
+          maxIterations: 5,
+          completionPromise: "COMPLETE",
+          tasksMode: false,
+          taskPromise: "READY",
+          prompt: "test prompt",
+          startedAt: new Date().toISOString(),
+          model: "fake/model",
+          verification: {
+            enabled: true,
+            mode: "on-claim",
+            commands: ["bun test"],
+            lastRunIteration: 1,
+            lastRunPassed: false,
+            lastFailureSummary: "Verification failed: exit 1 for \"bun test\"",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    writeFileSync(
+      join(ralphDir, "ralph-history.json"),
+      JSON.stringify(
+        {
+          iterations: [
+            {
+              iteration: 1,
+              startedAt: new Date().toISOString(),
+              endedAt: new Date().toISOString(),
+              durationMs: 1000,
+              model: "fake/model",
+              toolsUsed: {},
+              filesModified: [],
+              exitCode: 0,
+              completionDetected: true,
+              errors: [],
+              verification: {
+                triggered: true,
+                reason: "completion_claim",
+                allPassed: false,
+                steps: [
+                  {
+                    command: "bun test",
+                    exitCode: 1,
+                    timedOut: false,
+                    durationMs: 1000,
+                    stderrSnippet: "fail",
+                  },
+                ],
+              },
+            },
+          ],
+          totalDurationMs: 1000,
+          struggleIndicators: {
+            repeatedErrors: {},
+            noProgressIterations: 0,
+            shortIterations: 0,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const res = runRalphSync(cwd, ["status"]);
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("Verify:       ENABLED");
+    expect(res.stdout).toContain("Verify Mode:  on-claim");
+    expect(res.stdout).toContain("Verify Last:  #1 FAIL");
+    expect(res.stdout).toContain("verify:FAIL");
+  });
+});
+
 describe("streamed CLI output", () => {
   test("shows compact tool summary when tool events stream", () => {
     const cwd = makeTempDir();

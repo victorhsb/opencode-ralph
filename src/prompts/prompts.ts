@@ -272,3 +272,42 @@ function buildRegularPrompt(state: RalphState): string {
 
   return builder.build();
 }
+
+function getVerificationRulesSection(state: RalphState): string {
+  if (!state.verification?.enabled || state.verification.commands.length === 0) {
+    return "";
+  }
+
+  const commands = state.verification.commands
+    .map((command) => `- ${command}`)
+    .join("\n");
+
+  return `
+## Verification Requirements
+
+Verification mode: ${state.verification.mode}
+These commands must pass before completion claims are accepted:
+${commands}
+`.trimEnd();
+}
+
+function getVerificationFailureSection(state: RalphState): string {
+  if (!state.verification?.enabled || state.verification.lastRunPassed !== false) {
+    return "";
+  }
+
+  const summary = state.verification.lastFailureSummary ?? "Verification failed in the previous iteration.";
+  const details = state.verification.lastFailureDetails
+    ? `\nDetails:\n${state.verification.lastFailureDetails}`
+    : "";
+
+  return `
+## Previous Verification Failure (must be fixed)
+
+${summary}${details}
+
+Fix the verification failures before setting completion to true again.
+
+---
+`;
+}
