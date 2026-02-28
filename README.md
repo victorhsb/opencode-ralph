@@ -4,19 +4,14 @@
 </p>
 
 <p align="center">
-  <img src="screenshot.webp" alt="Open Ralph Wiggum - Iterative AI coding loop for OpenCode" />
-</p>
-
-<p align="center">
   <em>Works exclusively with <b>OpenCode</b> using the official SDK</em><br>
   <em>Based on the <a href="https://ghuntley.com/ralph/">Ralph Wiggum technique</a> by Geoffrey Huntley</em>
-  <em>Forked from <a href="https://github.com/th0rgal/ralph-wiggum.git">Ralph Wiggum technique</a> by Geoffrey Huntley</em>
+  <em>Forked from <a href="https://github.com/th0rgal/ralph-wiggum.git">ralph-wiggum</a> by @th0rgal</em>
 </p>
 
 <p align="center">
   <a href="https://github.com/victorhsb/opencode-ralph/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <a href="https://github.com/victorhsb/opencode-ralph"><img src="https://img.shields.io/badge/built%20with-Bun%20%2B%20TypeScript-f472b6.svg" alt="Built with Bun + TypeScript"></a>
-  <a href="https://github.com/victorhsb/opencode-ralph/releases"><img src="https://img.shields.io/github/v/release/victorhsb/opencode-ralph?include_prereleases" alt="Release"></a>
 </p>
 
 <p align="center">
@@ -27,15 +22,6 @@
   <a href="#commands">Commands</a>
 </p>
 
-<p align="center">
-  <strong>Tired of agents breaking your local environment?</strong><br>
-  🏝️ <a href="https://github.com/Th0rgal/sandboxed.sh">sandboxed.sh</a> gives each task an isolated Linux workspace. Self-hosted. Git-backed.
-</p>
-
-<p align="center">
-  💬 <strong>Join the community:</strong> <a href="https://relens.ai/community">relens.ai/community</a>
-</p>
-
 ---
 
 ## Supported Platform
@@ -44,7 +30,7 @@ Open Ralph Wiggum works exclusively with **OpenCode** using the official SDK.
 
 | Platform | Requirement |
 |----------|-------------|
-| **OpenCode** | SDK v0.15.0+ (pinned to 0.15.x range) |
+| **OpenCode** | SDK v1.2.10+ (pinned to 1.2.10 range) |
 
 ---
 
@@ -71,6 +57,7 @@ done
 - **Task Tracking** — Built-in task management with `--tasks` mode
 - **Live Monitoring** — Check progress with `--status` from another terminal
 - **Mid-Loop Hints** — Inject guidance with `--add-context` without stopping
+- **Supervisor** — By using `--supervisor`, between each iteration it will run a short supervisor to evaluate the work being done and suggest improvements.
 
 ## Why Use an Agentic Loop?
 
@@ -119,6 +106,68 @@ cd opencode-ralph
 ```
 
 This installs the `ralph` CLI command globally.
+
+## Project Initialization
+
+Before running your first loop, initialize Ralph in your project directory. This creates the necessary configuration files and directory structure.
+
+### `ralph init`
+
+```bash
+# Initialize Ralph in the current directory
+ralph init
+
+# Initialize without installing skills
+ralph init --no-skill
+
+# Force re-initialization (overwrite existing files)
+ralph init --force
+```
+
+### What `init` Creates
+
+The `ralph init` command sets up the following in your project:
+
+| File/Directory | Purpose |
+|----------------|---------|
+| `.ralph/` | Runtime state directory (automatically gitignored) |
+| `.ralph/ralph-tasks.md` | Starter task file for Tasks Mode |
+| `.ralph/ralph-context.md` | Context injection file (via `--add-context`) |
+| `~/.config/opencode/skills/` | OpenCode-compatible AI assistant skills |
+| `.gitignore` | Updated to exclude `.ralph/` from version control |
+
+After initialization, edit `.ralph/ralph-tasks.md` to define your project tasks before running with `--tasks` mode.
+
+### Skills System
+
+Ralph includes **OpenCode-compatible skills** - AI assistant configurations that extend OpenCode's capabilities with Ralph-specific knowledge.
+
+**Built-in Skills:**
+
+| Skill | Description |
+|-------|-------------|
+| `ralph-cli-manager` | Helps AI assistants safely manage Ralph CLI operations - tasks, monitoring, context injection |
+| `ralph-loop-plan-creator` | Assists with planning complex multi-phase projects by breaking them into dependency-ordered phases |
+
+**What Skills Provide:**
+
+- **Specialized Knowledge**: AI assistants understand Ralph's task system, monitoring commands, and best practices
+- **Safe Operations**: Guidance on when to use `--add-context`, `--status`, and task management commands
+- **Project Planning**: Automatic generation of phase-based plans with dependency ordering for complex MVPs
+
+**Skills Location:**
+
+Skills are embedded in the Ralph binary and extracted to `~/.config/opencode/skills/` during initialization. This allows OpenCode (and compatible AI assistants) to automatically discover and use them when working with Ralph projects.
+
+```bash
+# View installed skills
+ls ~/.config/opencode/skills/
+
+# Example output:
+# ralph-cli-manager/         ralph-loop-plan-creator/
+```
+
+Skills are **optional but recommended** - they enhance AI assistant effectiveness when working with Ralph-managed projects.
 
 ## Quick Start
 
@@ -745,18 +794,10 @@ During operation, Ralph stores state in `.ralph/` (automatically created and git
 npm uninstall -g @victorhsb/opencode-ralph
 ```
 
-```powershell
-npm uninstall -g @victorhsb/opencode-ralph
-```
-
 ## Learn More
 
 - [Original Ralph Wiggum technique by Geoffrey Huntley](https://ghuntley.com/ralph/)
 - [Ralph Orchestrator](https://github.com/mikeyobrien/ralph-orchestrator)
-
-## See Also
-
-Check out 🏝️ [sandboxed.sh](https://github.com/Th0rgal/sandboxed.sh) — a dashboard for orchestrating AI agents with workspace management, real-time monitoring, and multi-agent workflows.
 
 ## License
 
