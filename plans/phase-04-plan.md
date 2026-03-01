@@ -185,3 +185,17 @@
 - Master plan updates required:
   - Mark Phase 04 as complete
   - Note error hierarchy available for future use
+
+## 9) Implementation Status (Iteration 2)
+
+- Status: COMPLETE
+- Implemented:
+  - Added structured error hierarchy in `src/errors/index.ts`
+  - Added user-facing message mapper in `src/errors/messages.ts`
+  - Integrated Phase 02 validation flow by making `StateValidationError` extend `StateCorruptedError`
+  - Refactored SDK/client and prompt file read paths to throw typed errors with preserved causes
+  - Updated main CLI command path to normalize typed errors and print user-friendly messages
+  - Added error hierarchy and message-mapper tests in `src/errors/__tests__/errors.test.ts`
+- Notes for next phases:
+  - `ConfigError` and `TaskError` are now available for Phase 05/07 integrations
+  - Error message mapping is centralized in `src/errors/messages.ts`

@@ -18,6 +18,7 @@ import { homedir } from "os";
 import { fileURLToPath } from "url";
 import type { Command } from "commander";
 import { unzipSync } from "fflate";
+import { logger as console } from "../../logger";
 
 // Import the embedded skill files - Bun will embed these in the compiled binary
 // The import returns the path to the file (or the virtual path in compiled mode)

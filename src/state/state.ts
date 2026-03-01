@@ -11,8 +11,39 @@ import {
   getHistoryFilePath,
 } from "../config/config";
 import { z } from "zod";
+import { StateCorruptedError } from "../errors";
+import { logger as console } from "../logger";
+import { compressState, decompressState, isGzipBuffer } from "./compression";
+import { getIterationsToKeep, shouldPrune } from "./pruning";
 
 export { getStateDir };
+
+export interface StateStorageOptions {
+  compress: boolean;
+  maxHistory: number;
+}
+
+const DEFAULT_STATE_STORAGE_OPTIONS: StateStorageOptions = {
+  compress: false,
+  maxHistory: 100,
+};
+
+let stateStorageOptions: StateStorageOptions = { ...DEFAULT_STATE_STORAGE_OPTIONS };
+
+export function configureStateStorage(options?: Partial<StateStorageOptions>): void {
+  if (!options) {
+    stateStorageOptions = { ...DEFAULT_STATE_STORAGE_OPTIONS };
+    return;
+  }
+
+  if (options.compress !== undefined) {
+    stateStorageOptions.compress = options.compress;
+  }
+
+  if (options.maxHistory !== undefined) {
+    stateStorageOptions.maxHistory = options.maxHistory;
+  }
+}
 
 const VerificationStepRecordSchema = z.object({
   command: z.string(),
@@ -127,16 +158,17 @@ export function ensureStateDir(): void {
 
 export function saveState(state: RalphState): void {
   ensureStateDir();
-  writeFileSync(getStateFilePath(), JSON.stringify(state, null, 2));
+  writeStateFile(getStateFilePath(), state);
 }
 
-export class StateValidationError extends Error {
+export class StateValidationError extends StateCorruptedError {
   constructor(
     message: string,
     public readonly filePath: string,
-    public readonly zodError?: z.ZodError
+    public readonly zodError?: z.ZodError,
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, cause);
     this.name = "StateValidationError";
   }
 }
@@ -158,6 +190,26 @@ function formatZodError(error: z.ZodError): string {
   return error.issues
     .map((e) => `  - ${e.path.join(".")}: ${e.message}`)
     .join("\n") || "Validation failed with no specific errors";
+}
+
+function writeStateFile(filePath: string, data: unknown): void {
+  const json = JSON.stringify(data, null, 2);
+
+  if (stateStorageOptions.compress) {
+    writeFileSync(filePath, compressState(json));
+    return;
+  }
+
+  writeFileSync(filePath, json);
+}
+
+function readStateFile(filePath: string): string {
+  const raw = readFileSync(filePath);
+  if (isGzipBuffer(raw)) {
+    return decompressState(raw);
+  }
+
+  return raw.toString("utf-8");
 }
 
 function migrateState(raw: unknown): unknown {
@@ -204,7 +256,7 @@ export function loadState(): RalphState | null {
   }
 
   try {
-    const raw = readFileSync(path, "utf-8");
+    const raw = readStateFile(path);
     const parsed = JSON.parse(raw);
 
     const migrated = migrateState(parsed);
@@ -224,7 +276,8 @@ export function loadState(): RalphState | null {
       `State file validation failed. The corrupted file has been backed up.\n` +
       `Validation errors:\n${errorDetails}`,
       path,
-      result.error
+      result.error,
+      result.error,
     );
   } catch (e) {
     if (e instanceof StateValidationError) {
@@ -240,7 +293,9 @@ export function loadState(): RalphState | null {
     throw new StateValidationError(
       `Failed to load state file. The corrupted file has been backed up.\n` +
       `Error: ${e instanceof Error ? e.message : String(e)}`,
-      path
+      path,
+      undefined,
+      e,
     );
   }
 }
@@ -265,7 +320,7 @@ export function loadHistory(): RalphHistory {
   }
 
   try {
-    const raw = readFileSync(path, "utf-8");
+    const raw = readStateFile(path);
     const parsed = JSON.parse(raw);
 
     const result = RalphHistorySchema.safeParse(parsed);
@@ -283,7 +338,8 @@ export function loadHistory(): RalphHistory {
       `History file validation failed. The corrupted file has been backed up.\n` +
       `Validation errors:\n${errorDetails}`,
       path,
-      result.error
+      result.error,
+      result.error,
     );
   } catch (e) {
     if (e instanceof StateValidationError) {
@@ -303,14 +359,27 @@ export function loadHistory(): RalphHistory {
     throw new StateValidationError(
       `Failed to load history file. The corrupted file has been backed up.\n` +
       `Error: ${e instanceof Error ? e.message : String(e)}`,
-      path
+      path,
+      undefined,
+      e,
     );
   }
 }
 
 export function saveHistory(history: RalphHistory): void {
   ensureStateDir();
-  writeFileSync(getHistoryFilePath(), JSON.stringify(history, null, 2));
+
+  const maxHistory = Math.max(1, stateStorageOptions.maxHistory);
+  const prunedIterations = shouldPrune(history.iterations.length, { maxIterations: maxHistory })
+    ? getIterationsToKeep(history.iterations, { maxIterations: maxHistory })
+    : history.iterations;
+
+  const historyToSave: RalphHistory = {
+    ...history,
+    iterations: prunedIterations,
+  };
+
+  writeStateFile(getHistoryFilePath(), historyToSave);
 }
 
 export function clearHistory(): void {

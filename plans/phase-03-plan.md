@@ -120,11 +120,16 @@
 
 - Emit promise tag: READY_FOR_NEXT_TASK
 - Conditions before emitting the tag:
-  - Unit tests exist for: args, prompts, tasks, fs-tracker, state
-  - All tests pass
-  - Coverage report generated
-  - No regressions in existing tests
-  - Build passes
+  - Unit tests exist for: args, prompts, tasks, fs-tracker, state (verified)
+  - All tests pass (verified: `bun test --coverage` => 461 pass, 0 fail)
+  - Coverage report generated (verified via `bun test --coverage`)
+  - No regressions in existing tests (verified)
+  - Build passes (verified: `bun run build`)
+
+- STATUS: COMPLETE (Iteration 1)
+- Notes:
+  - Added CLI argument parsing coverage in `src/cli/__tests__/args.test.ts`.
+  - Updated prompt verification assertions in `src/prompts/__tests__/prompts.test.ts` to match tasks-mode-only verification sections.
 
 ## 8) Handoff to Next Phase
 
@@ -133,12 +138,14 @@
   - `src/prompts/__tests__/prompts.test.ts`
   - `src/tasks/__tests__/tasks.test.ts`
   - `src/fs-tracker/__tests__/fs-tracker.test.ts`
-  - Updated test infrastructure
+  - `src/state/__tests__/state.test.ts`
+  - Updated test infrastructure with coverage execution baseline
 
 - What changed that next phase must know:
   - Comprehensive test coverage now available
   - Can confidently refactor in Phase 08
   - Test patterns established
+  - CLI argument validation is now directly covered by dry-run integration-style unit tests
 
 - New risks or assumptions:
   - Tests use temp directories (won't interfere with real state)

@@ -158,3 +158,18 @@
 - Master plan updates required:
   - Mark Phase 05 as complete
   - Document config system availability
+
+## 9) Implementation Status (Iteration 3)
+
+- Status: COMPLETE
+- Implemented:
+  - Added config schema validation in `src/config/schema.ts`
+  - Added layered config loader in `src/config/loader.ts` with precedence `CLI > project > home > defaults`
+  - Added `ralph.config.ts` support via dynamic import with validation and typed `ConfigError` handling
+  - Integrated config merging into main CLI execution path in `src/cli/commands/main.ts`
+  - Added focused loader tests in `src/config/__tests__/loader.test.ts`
+  - Expanded CLI argument tests with config precedence scenarios in `src/cli/__tests__/args.test.ts`
+  - Documented config files and precedence in `README.md`
+- Notes for next phases:
+  - Logging phase can reuse `ConfigError` wrapping from config loading
+  - Additional config options can be safely added by extending `ConfigSchema`

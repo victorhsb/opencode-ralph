@@ -28,6 +28,7 @@ import {
   formatDuration,
 } from "../../utils/utils";
 import { getTasksFilePath } from "../../config/config";
+import { logger as console } from "../../logger";
 
 /**
  * Status command options

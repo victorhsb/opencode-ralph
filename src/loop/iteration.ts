@@ -7,7 +7,8 @@
 import { executePrompt } from "../sdk/executor";
 import { formatToolResult } from "../sdk/output";
 import type { SdkClient } from "../sdk/client";
-import type { StructuredOutput } from "../sdk/executor";
+import type { StructuredOutput, TokenUsage } from "../sdk/executor";
+import { logger as console } from "../logger";
 
 export interface SdkIterationOptions {
   client: SdkClient;
@@ -26,6 +27,7 @@ export interface SdkIterationResult {
   exitCode: number;
   errors: string[];
   structuredOutput?: StructuredOutput;
+  tokenUsage?: TokenUsage;
 }
 
 export async function executeSdkIteration(options: SdkIterationOptions): Promise<SdkIterationResult> {
@@ -166,6 +168,7 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
       exitCode: result.exitCode,
       errors,
       ...(result.structuredOutput !== undefined && { structuredOutput: result.structuredOutput }),
+      ...(result.tokenUsage !== undefined && { tokenUsage: result.tokenUsage }),
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

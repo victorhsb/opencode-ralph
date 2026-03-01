@@ -211,3 +211,17 @@
 
 - Master plan updates required:
   - Mark Phase 10 as complete
+
+## 9) Implementation Status
+
+- Status: ✅ Completed in iteration 8
+- Completed work:
+  - Added `src/performance/tracker.ts` with per-iteration timing, session totals, token aggregation, and cost estimation.
+  - Integrated tracker lifecycle into `src/loop/loop.ts` (start/end per iteration, summary on session exit paths).
+  - Extended SDK execution results with optional token usage extraction from response metadata.
+  - Added configuration support via `performance.trackTokens` and `performance.estimateCost`.
+  - Added focused tests in `src/performance/__tests__/tracker.test.ts`.
+  - Updated README with a new performance monitoring section and config examples.
+- Notes for next phase:
+  - Token usage is best-effort and depends on provider payloads.
+  - Cost estimation is approximate and uses model heuristics with sensible defaults.

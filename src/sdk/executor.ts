@@ -6,6 +6,7 @@
  */
 
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
+import { ValidationError } from "../errors";
 
 export interface StructuredOutput {
   /** Whether the task is complete */
@@ -14,6 +15,12 @@ export interface StructuredOutput {
   reasoning?: string;
   /** The actual output text */
   output?: string;
+}
+
+export interface TokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
 }
 
 export interface ExecutionResult {
@@ -29,6 +36,8 @@ export interface ExecutionResult {
   exitCode: number;
   /** Structured output data when format is provided */
   structuredOutput?: StructuredOutput;
+  /** Token usage metadata when available */
+  tokenUsage?: TokenUsage;
 }
 
 export interface ExecutionOptions {
@@ -152,7 +161,6 @@ export async function executePrompt(
           // Check for session completion events
           const rawEventType = (event as any)?.type;
           if (rawEventType === "session.idle" || rawEventType === "session.error") {
-            console.log("session is idle or errored.", rawEventType)
             sessionComplete = true;
           }
 
@@ -201,7 +209,7 @@ export async function executePrompt(
     if (model) {
       const parts = model.split("/");
       if (parts.length < 2) {
-        throw new Error("invalid model format; needs to be <provider>/<model>");
+        throw new ValidationError("Invalid model format; expected <provider>/<model>.");
       }
       const provider = parts[0]!
       const modelID = parts.slice(1).join("/")
@@ -209,7 +217,6 @@ export async function executePrompt(
         providerID: provider,
         modelID: modelID,
       }
-      console.log("using model", modelConfig)
     }
 
     const promptOptions: {
@@ -270,6 +277,10 @@ export async function executePrompt(
     if (structuredOutput !== undefined) {
       executionResult.structuredOutput = structuredOutput;
     }
+    const tokenUsage = extractTokenUsage(result);
+    if (tokenUsage !== undefined) {
+      executionResult.tokenUsage = tokenUsage;
+    }
     return executionResult;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -301,7 +312,7 @@ function logEventDebug(eventType: string, content: string): void {
   if (process.env["RALPH_DEBUG_EVENTS"] !== "1") return;
   const timestamp = new Date().toISOString();
   const size = Buffer.byteLength(content, "utf8");
-  console.error(`[DEBUG] [${timestamp}] Event: ${eventType} | Size: ${size} bytes`);
+  process.stderr.write(`[DEBUG] [${timestamp}] Event: ${eventType} | Size: ${size} bytes\n`);
 }
 
 /**
@@ -584,4 +595,94 @@ function extractStructuredOutput(
   }
 
   return result;
+}
+
+function extractTokenUsage(message: unknown): TokenUsage | undefined {
+  if (!message || typeof message !== "object") {
+    return undefined;
+  }
+
+  const msg = message as Record<string, unknown>;
+  const info = msg["info"] && typeof msg["info"] === "object"
+    ? msg["info"] as Record<string, unknown>
+    : undefined;
+
+  const candidates: Array<Record<string, unknown>> = [];
+  if (msg["usage"] && typeof msg["usage"] === "object") {
+    candidates.push(msg["usage"] as Record<string, unknown>);
+  }
+  if (msg["tokenUsage"] && typeof msg["tokenUsage"] === "object") {
+    candidates.push(msg["tokenUsage"] as Record<string, unknown>);
+  }
+  if (info?.["usage"] && typeof info["usage"] === "object") {
+    candidates.push(info["usage"] as Record<string, unknown>);
+  }
+  if (info?.["tokenUsage"] && typeof info["tokenUsage"] === "object") {
+    candidates.push(info["tokenUsage"] as Record<string, unknown>);
+  }
+  if (info?.["metrics"] && typeof info["metrics"] === "object") {
+    candidates.push(info["metrics"] as Record<string, unknown>);
+  }
+
+  for (const candidate of candidates) {
+    const usage = parseTokenUsageRecord(candidate);
+    if (usage !== undefined) {
+      return usage;
+    }
+  }
+
+  return undefined;
+}
+
+function parseTokenUsageRecord(record: Record<string, unknown>): TokenUsage | undefined {
+  const inputTokens = pickNumber(record, [
+    "inputTokens",
+    "input_tokens",
+    "promptTokens",
+    "prompt_tokens",
+    "requestTokens",
+    "request_tokens",
+  ]);
+  const outputTokens = pickNumber(record, [
+    "outputTokens",
+    "output_tokens",
+    "completionTokens",
+    "completion_tokens",
+    "responseTokens",
+    "response_tokens",
+  ]);
+  const totalTokens = pickNumber(record, [
+    "totalTokens",
+    "total_tokens",
+    "tokens",
+  ]);
+
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
+    return undefined;
+  }
+
+  const usage: TokenUsage = {};
+  if (inputTokens !== undefined) {
+    usage.inputTokens = inputTokens;
+  }
+  if (outputTokens !== undefined) {
+    usage.outputTokens = outputTokens;
+  }
+  if (totalTokens !== undefined) {
+    usage.totalTokens = totalTokens;
+  } else if (inputTokens !== undefined || outputTokens !== undefined) {
+    usage.totalTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
+  }
+
+  return usage;
+}
+
+function pickNumber(record: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
 }

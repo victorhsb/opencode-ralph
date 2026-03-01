@@ -201,3 +201,20 @@
 - Documentation complete
 
 **Status: PROJECT COMPLETE** 🎉
+
+## 9) Implementation Status
+
+- Status: ✅ Completed in iteration 9
+- Decision:
+  - Stayed with JSON state storage after re-evaluating SQLite trade-offs.
+- Completed work:
+  - Added optional gzip compression utilities in `src/state/compression.ts`.
+  - Added configurable pruning helpers in `src/state/pruning.ts`.
+  - Integrated compression and pruning into `src/state/state.ts` with backward-compatible reads.
+  - Added config schema/defaults for `state.compress` and `state.maxHistory`.
+  - Wired state options from config into loop execution.
+  - Expanded tests in `src/state/__tests__/state.test.ts` and `src/config/__tests__/loader.test.ts`.
+  - Updated `docs/adr/002-json-over-sqlite.md` and README state management docs.
+- Notes for maintainers:
+  - Compression remains opt-in to keep default behavior human-readable.
+  - History pruning now defaults to the latest 100 iterations.

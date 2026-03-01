@@ -8,11 +8,11 @@ Open Ralph Wiggum implements the Ralph Wiggum technique - continuous self-refere
 
 ### Components
 
-1. **CLI Interface** (`ralph.ts`)
-   - Command-line argument parsing
-   - State management (.ralph/ directory)
-   - Loop orchestration
-   - Event handling (SIGINT, cleanup)
+1. **CLI Entrypoint and Commands** (`ralph.ts`, `src/cli/program.ts`, `src/cli/commands/*`)
+   - Thin entrypoint (`ralph.ts`) delegating to Commander setup
+   - Command registration via focused command modules
+   - Main command execution and option/config resolution
+   - Subcommands for status, tasks, context, suggestions, and init
 
 2. **SDK Client** (`src/sdk/client.ts`)
    - OpenCode SDK initialization
@@ -37,7 +37,7 @@ Open Ralph Wiggum implements the Ralph Wiggum technique - continuous self-refere
 ```
 User Input
     ↓
-CLI Parser (ralph.ts)
+CLI Parser (`src/cli/program.ts`)
     ↓
 State Manager (load/save .ralph/)
     ↓
@@ -235,8 +235,14 @@ OpenCode reads from `~/.config/opencode/opencode.json`:
 
 ```
 ralph-wiggum/
-├── ralph.ts                      # Main CLI entry point
+├── ralph.ts                      # CLI bootstrap (delegates to src/cli/program.ts)
 ├── src/
+│   ├── cli/                      # Commander setup and command handlers
+│   │   ├── program.ts            # Global options + command registration
+│   │   └── commands/             # main, status, task, context, suggestion, init
+│   ├── loop/                     # Main loop orchestration
+│   │   ├── loop.ts               # Iteration lifecycle + supervisor + verification flow
+│   │   └── iteration.ts          # Single SDK execution wrapper
 │   └── sdk/                      # SDK integration layer
 │       ├── client.ts             # SDK client initialization
 │       ├── executor.ts           # Prompt execution and event handling

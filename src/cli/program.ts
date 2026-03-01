@@ -44,6 +44,9 @@ function configureProgram(program: Command): Command {
     .option("-f, --file <path>", "Read prompt content from a file")
     .option("-m, --model <model>", "Model to use (e.g., anthropic/claude-sonnet-4)")
     .option("-a, --agent <agent>", "Agent to use for this session (primary agents only)")
+    .option("--log-level <level>", "Minimum log level: DEBUG|INFO|WARN|ERROR", "INFO")
+    .option("--log-file <path>", "Write logs to this file")
+    .option("--structured-logs", "Emit logs in JSON format")
     .option("-i, --min-iterations <n>", "Minimum iterations before completion allowed", parseInt, 1)
     .option("-x, --max-iterations <n>", "Maximum iterations before stopping (0 = unlimited)", parseInt, 0)
     .option("-c, --completion-promise <text>", "Phrase that signals completion", "COMPLETE")
@@ -74,6 +77,7 @@ function configureProgram(program: Command): Command {
   // Custom validation hooks
   program.hook("preAction", (thisCommand) => {
     const opts = thisCommand.opts();
+    console.error("DEBUG: All opts:", JSON.stringify(opts, null, 2));
 
     // Validate supervisor-memory-limit
     if (opts["supervisorMemoryLimit"] !== undefined) {
@@ -119,6 +123,14 @@ function configureProgram(program: Command): Command {
       const maxChars = parseInt(String(opts["verifyMaxOutputChars"]), 10);
       if (isNaN(maxChars) || maxChars < 200) {
         console.error("Error: --verify-max-output-chars must be at least 200");
+        process.exit(1);
+      }
+    }
+
+    if (opts["logLevel"] !== undefined) {
+      const logLevel = String(opts["logLevel"]).toUpperCase();
+      if (!["DEBUG", "INFO", "WARN", "ERROR"].includes(logLevel)) {
+        console.error("Error: --log-level must be one of: DEBUG, INFO, WARN, ERROR");
         process.exit(1);
       }
     }

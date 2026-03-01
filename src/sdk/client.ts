@@ -10,6 +10,8 @@ import type { Config } from "@opencode-ai/sdk/v2";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { createServer } from "net";
+import { SdkInitError } from "../errors";
+import { logger as console } from "../logger";
 
 export interface SdkClientOptions {
   /** Model identifier (e.g., "openai/gpt-4") */
@@ -53,7 +55,7 @@ export async function closeSdkServer(
     return true;
   } catch (error) {
     if (verbose) {
-      console.error("⚠️  SDK server close failed", error);
+      console.warn("⚠️  SDK server close failed", error);
     }
     return false;
   }
@@ -251,7 +253,12 @@ export async function createSdkClient(options: SdkClientOptions): Promise<SdkCli
 
   const hostname = options.hostname ?? "127.0.0.1";
   const requestedPort = options.port ?? 4096;
-  const port = await findAvailablePort(hostname, requestedPort);
+  let port: number;
+  try {
+    port = await findAvailablePort(hostname, requestedPort);
+  } catch (error) {
+    throw new SdkInitError(`Failed to allocate SDK server port on ${hostname}.`, error);
+  }
 
   const config: Config = {};
   if (options.model !== undefined) {
@@ -285,12 +292,17 @@ export async function createSdkClient(options: SdkClientOptions): Promise<SdkCli
     config.plugin = plugins.filter((p) => /auth/i.test(p));
   }
 
-  const opencode = await createOpencode({
-    hostname,
-    port,
-    timeout: 10000, // 10 second timeout for server startup
-    config,
-  });
+  let opencode: Awaited<ReturnType<typeof createOpencode>>;
+  try {
+    opencode = await createOpencode({
+      hostname,
+      port,
+      timeout: 10000, // 10 second timeout for server startup
+      config,
+    });
+  } catch (error) {
+    throw new SdkInitError("Failed to initialize OpenCode SDK server.", error);
+  }
 
   return {
     client: opencode.client,

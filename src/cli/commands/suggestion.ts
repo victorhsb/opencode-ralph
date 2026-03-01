@@ -13,6 +13,7 @@ import {
   type SupervisorSuggestionsStore,
   type SupervisorSuggestion,
 } from "../../supervisor/supervisor";
+import { logger as console } from "../../logger";
 
 /**
  * Register suggestion subcommands

@@ -5,8 +5,7 @@
  * dry-run mode, and preparation for the main loop.
  */
 
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { existsSync } from "fs";
 import type { Command } from "commander";
 import { createSdkClient, closeSdkServer, type SdkClient, type SdkClientOptions } from "../../sdk/client";
 import type { RalphState } from "../../state/state";
@@ -15,6 +14,15 @@ import { readPromptFile } from "../../io/files";
 import { buildPrompt } from "../../prompts/prompts";
 import { checkAgentExists, formatAgentList } from "../../sdk/agents";
 import type { VerificationState } from "../../state/state";
+import {
+  LoopError,
+  SdkInitError,
+  ValidationError,
+  normalizeError,
+} from "../../errors";
+import { getUserFriendlyMessage } from "../../errors/messages";
+import { loadRalphConfig, type Config } from "../../config/loader";
+import { configureLogger, logger as console, type LogLevel } from "../../logger";
 
 /**
  * Parsed and validated CLI options
@@ -24,6 +32,9 @@ export interface MainCommandOptions {
   file?: string;
   model?: string;
   agent?: string;
+  logLevel?: LogLevel;
+  logFile?: string;
+  structuredLogs: boolean;
   minIterations: number;
   maxIterations: number;
   completionPromise: string;
@@ -50,69 +61,182 @@ export interface MainCommandOptions {
   verifyTimeoutMs?: number;
   verifyFailFast?: boolean;
   verifyMaxOutputChars?: number;
+  performance?: {
+    trackTokens?: boolean;
+    estimateCost?: boolean;
+  };
+  state?: {
+    compress?: boolean;
+    maxHistory?: number;
+  };
 }
 
 /**
  * Main command action - handles parsing, validation, and execution
  */
 export async function mainCommandAction(this: Command): Promise<void> {
-  const thisCommand = this;
-  const opts = thisCommand.opts<MainCommandOptions>();
-  const promptParts = thisCommand.args;
+  try {
+    const thisCommand = this;
+    const opts = thisCommand.opts<MainCommandOptions>();
+    const loadedConfig = await loadRalphConfig();
+    const resolvedOpts = mergeOptionsWithConfig(thisCommand, opts, loadedConfig.config);
+    const promptParts = thisCommand.args;
+    const loggerOptions: {
+      level?: LogLevel;
+      structured?: boolean;
+      file?: string;
+    } = {
+      structured: resolvedOpts.structuredLogs,
+    };
 
-  // Validate that either -p or -f is provided
-  if (!opts.prompt && !opts.file && promptParts.length === 0) {
-    console.error("Error: No prompt provided");
-    console.error("Usage: ralph \"Your task description\" [options]");
-    console.error("       ralph -p \"Your task description\" [options]");
-    console.error("       ralph -f <prompt-file> [options]");
-    console.error("Run 'ralph --help' for more information");
+    if (resolvedOpts.logLevel !== undefined) {
+      loggerOptions.level = resolvedOpts.logLevel;
+    }
+
+    if (resolvedOpts.logFile !== undefined) {
+      loggerOptions.file = resolvedOpts.logFile;
+    }
+
+    configureLogger(loggerOptions);
+
+    validateResolvedOptions(resolvedOpts);
+
+    // Validate that either -p or -f is provided
+    if (!resolvedOpts.prompt && !resolvedOpts.file && promptParts.length === 0) {
+      throw new ValidationError(
+        "No prompt provided. Usage: ralph \"Your task\" [options], ralph -p \"Your task\" [options], or ralph -f <prompt-file>."
+      );
+    }
+
+    // Parse prompt from various sources
+    let prompt = "";
+    if (resolvedOpts.file) {
+      // File option takes precedence
+      prompt = readPromptFile(resolvedOpts.file);
+    } else if (resolvedOpts.prompt) {
+      // Explicit prompt option
+      prompt = resolvedOpts.prompt;
+    } else if (promptParts.length === 1 && existsSync(promptParts[0]!)) {
+      // Single argument that is a file path
+      prompt = readPromptFile(promptParts[0]!);
+    } else {
+      // Join remaining args as prompt
+      prompt = promptParts.join(" ");
+    }
+
+    if (!prompt.trim()) {
+      throw new ValidationError("No prompt provided or prompt file is empty.");
+    }
+
+    // Validate min/max iterations relationship
+    if (resolvedOpts.maxIterations > 0 && resolvedOpts.minIterations > resolvedOpts.maxIterations) {
+      throw new ValidationError(
+        `--min-iterations (${resolvedOpts.minIterations}) cannot be greater than --max-iterations (${resolvedOpts.maxIterations}).`
+      );
+    }
+
+    // Handle dry-run mode
+    if (resolvedOpts.dryRun) {
+      handleDryRun(resolvedOpts, prompt);
+      return;
+    }
+
+    // Execute main workflow
+    await executeMainWorkflow(resolvedOpts, prompt);
+  } catch (error) {
+    const normalized = normalizeError(error);
+    const userMessage = getUserFriendlyMessage(normalized);
+    console.error(`Error: ${userMessage}`);
+    if (normalized.message !== userMessage) {
+      console.error(`Details: ${normalized.message}`);
+    }
     process.exit(1);
   }
+}
 
-  // Parse prompt from various sources
-  let prompt = "";
-  let promptSource = "";
+function mergeOptionsWithConfig(
+  command: Command,
+  cliOptions: MainCommandOptions,
+  config: Config,
+): MainCommandOptions {
+  const merged: MainCommandOptions = {
+    ...cliOptions,
+    allowAllExplicit: command.getOptionValueSource("allowAll") === "cli",
+  };
 
-  if (opts.file) {
-    // File option takes precedence
-    promptSource = opts.file;
-    prompt = readPromptFile(opts.file);
-  } else if (opts.prompt) {
-    // Explicit prompt option
-    prompt = opts.prompt;
-  } else if (promptParts.length === 1 && existsSync(promptParts[0]!)) {
-    // Single argument that is a file path
-    promptSource = promptParts[0]!;
-    prompt = readPromptFile(promptParts[0]!);
-  } else {
-    // Join remaining args as prompt
-    prompt = promptParts.join(" ");
+  const keys: Array<keyof Config & string> = [
+    "model",
+    "agent",
+    "logLevel",
+    "logFile",
+    "structuredLogs",
+    "minIterations",
+    "maxIterations",
+    "completionPromise",
+    "abortPromise",
+    "tasks",
+    "taskPromise",
+    "supervisor",
+    "supervisorModel",
+    "supervisorNoActionPromise",
+    "supervisorSuggestionPromise",
+    "supervisorMemoryLimit",
+    "supervisorPromptTemplate",
+    "promptTemplate",
+    "stream",
+    "verboseTools",
+    "commit",
+    "plugins",
+    "allowAll",
+    "silent",
+    "verify",
+    "verifyMode",
+    "verifyTimeoutMs",
+    "verifyFailFast",
+    "verifyMaxOutputChars",
+    "performance",
+    "state",
+    "dryRun",
+  ];
+
+  for (const key of keys) {
+    const source = command.getOptionValueSource(key);
+    if (source !== "cli" && config[key] !== undefined) {
+      (merged as unknown as Record<string, unknown>)[key] = config[key];
+    }
   }
 
-  if (!prompt.trim()) {
-    console.error("Error: No prompt provided or prompt file is empty");
-    console.error("Usage: ralph \"Your task description\" [options]");
-    console.error("Run 'ralph --help' for more information");
-    process.exit(1);
+  return merged;
+}
+
+function validateResolvedOptions(opts: MainCommandOptions): void {
+  if (!Number.isInteger(opts.supervisorMemoryLimit) || opts.supervisorMemoryLimit <= 0) {
+    throw new ValidationError("--supervisor-memory-limit must be greater than 0");
   }
 
-  // Validate min/max iterations relationship
-  if (opts.maxIterations > 0 && opts.minIterations > opts.maxIterations) {
-    console.error(
-      `Error: --min-iterations (${opts.minIterations}) cannot be greater than --max-iterations (${opts.maxIterations})`
-    );
-    process.exit(1);
+  if (!Number.isInteger(opts.minIterations) || opts.minIterations < 0) {
+    throw new ValidationError("--min-iterations must be non-negative");
   }
 
-  // Handle dry-run mode
-  if (opts.dryRun) {
-    handleDryRun(opts, prompt);
-    return;
+  if (!Number.isInteger(opts.maxIterations) || opts.maxIterations < 0) {
+    throw new ValidationError("--max-iterations must be non-negative");
   }
 
-  // Execute main workflow
-  await executeMainWorkflow(opts, prompt);
+  if (opts.verifyMode !== undefined && !["on-claim", "every-iteration"].includes(String(opts.verifyMode))) {
+    throw new ValidationError("--verify-mode must be one of: on-claim, every-iteration");
+  }
+
+  if (!Number.isInteger(opts.verifyTimeoutMs) || (opts.verifyTimeoutMs ?? 0) <= 0) {
+    throw new ValidationError("--verify-timeout-ms must be greater than 0");
+  }
+
+  if (!Number.isInteger(opts.verifyMaxOutputChars) || (opts.verifyMaxOutputChars ?? 0) < 200) {
+    throw new ValidationError("--verify-max-output-chars must be at least 200");
+  }
+
+  if (opts.logLevel !== undefined && !["DEBUG", "INFO", "WARN", "ERROR"].includes(opts.logLevel)) {
+    throw new ValidationError("--log-level must be one of: DEBUG, INFO, WARN, ERROR");
+  }
 }
 
 /**
@@ -196,18 +320,17 @@ async function executeMainWorkflow(opts: MainCommandOptions, prompt: string): Pr
     if (opts.agent) {
       const agentCheck = await checkAgentExists(sdkClient.client, opts.agent);
       if (!agentCheck.valid) {
-        console.error(`Error: ${agentCheck.error}`);
-        console.error("\nAvailable primary agents:");
-        console.error(formatAgentList(agentCheck.availableAgents || []));
-        console.error("\nRun without --agent to use the default agent.");
-        process.exit(1);
+        throw new ValidationError(
+          `${agentCheck.error}\nAvailable primary agents:\n${formatAgentList(agentCheck.availableAgents || [])}\nRun without --agent to use the default agent.`
+        );
       }
       console.log(`🤖 Using agent: ${opts.agent}`);
     }
   } catch (error) {
-    console.error("❌ Failed to initialize SDK client:", error);
-    console.error("SDK initialization failed. Please ensure OpenCode is properly installed and configured.");
-    process.exit(1);
+    if (error instanceof ValidationError) {
+      throw error;
+    }
+    throw new SdkInitError("SDK initialization failed.", error);
   }
 
   // Run the main loop
@@ -242,14 +365,17 @@ async function executeMainWorkflow(opts: MainCommandOptions, prompt: string): Pr
       verificationTimeoutMs: verification.timeoutMs,
       verificationFailFast: verification.failFast,
       verificationMaxOutputChars: verification.maxOutputChars,
+      performanceTrackTokens: opts.performance?.trackTokens ?? true,
+      performanceEstimateCost: opts.performance?.estimateCost ?? true,
+      stateCompression: opts.state?.compress ?? false,
+      stateMaxHistory: opts.state?.maxHistory ?? 100,
     };
     if (opts.agent !== undefined) {
       loopOptions.agent = opts.agent;
     }
     await runRalphLoop(loopOptions);
   } catch (error) {
-    console.error("Fatal error:", error);
-    process.exit(1);
+    throw new LoopError("Fatal error while running Ralph loop.", error);
   } finally {
     if (sdkClient) {
       try {

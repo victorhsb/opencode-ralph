@@ -13,19 +13,132 @@ import {
   clearState,
   clearHistory,
   StateValidationError,
+  configureStateStorage,
 } from "../state";
 import { getStateFilePath, getHistoryFilePath } from "../../config/config";
 import { existsSync, writeFileSync, readdirSync } from "fs";
+import { compressState } from "../compression";
+import { getIterationsToKeep, shouldPrune } from "../pruning";
 
 describe("state validation", () => {
   beforeEach(() => {
+    configureStateStorage({ compress: false, maxHistory: 100 });
     clearState();
     clearHistory();
   });
 
   afterEach(() => {
+    configureStateStorage({ compress: false, maxHistory: 100 });
     clearState();
     clearHistory();
+  });
+
+  describe("compression", () => {
+    test("roundtrips compressed state data", () => {
+      const payload = {
+        version: 1,
+        active: true,
+        iteration: 1,
+        minIterations: 1,
+        maxIterations: 5,
+        completionPromise: "COMPLETE",
+        tasksMode: false,
+        taskPromise: "READY_FOR_NEXT_TASK",
+        prompt: "test",
+        startedAt: new Date().toISOString(),
+        model: "m",
+      };
+      const compressed = compressState(JSON.stringify(payload, null, 2));
+      expect(compressed.length).toBeGreaterThan(0);
+
+      writeFileSync(getStateFilePath(), compressed);
+      const loaded = loadState();
+      expect(loaded?.iteration).toBe(1);
+    });
+
+    test("loads compressed history transparently", () => {
+      const history: RalphHistory = {
+        iterations: [],
+        totalDurationMs: 321,
+        struggleIndicators: {
+          repeatedErrors: {},
+          noProgressIterations: 0,
+          shortIterations: 0,
+        },
+      };
+
+      writeFileSync(getHistoryFilePath(), compressState(JSON.stringify(history, null, 2)));
+      const loaded = loadHistory();
+      expect(loaded.totalDurationMs).toBe(321);
+    });
+  });
+
+  describe("pruning", () => {
+    test("detects when pruning is needed", () => {
+      expect(shouldPrune(101, { maxIterations: 100 })).toBe(true);
+      expect(shouldPrune(100, { maxIterations: 100 })).toBe(false);
+    });
+
+    test("keeps latest N iterations", () => {
+      expect(getIterationsToKeep([1, 2, 3, 4, 5], { maxIterations: 3 })).toEqual([3, 4, 5]);
+    });
+
+    test("prunes history to configured max size on save", () => {
+      configureStateStorage({ maxHistory: 2 });
+
+      const history: RalphHistory = {
+        iterations: [
+          {
+            iteration: 1,
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+            durationMs: 10,
+            model: "m",
+            toolsUsed: {},
+            filesModified: [],
+            exitCode: 0,
+            completionDetected: false,
+            errors: [],
+          },
+          {
+            iteration: 2,
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+            durationMs: 10,
+            model: "m",
+            toolsUsed: {},
+            filesModified: [],
+            exitCode: 0,
+            completionDetected: false,
+            errors: [],
+          },
+          {
+            iteration: 3,
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+            durationMs: 10,
+            model: "m",
+            toolsUsed: {},
+            filesModified: [],
+            exitCode: 0,
+            completionDetected: false,
+            errors: [],
+          },
+        ],
+        totalDurationMs: 30,
+        struggleIndicators: {
+          repeatedErrors: {},
+          noProgressIterations: 0,
+          shortIterations: 0,
+        },
+      };
+
+      saveHistory(history);
+      const loaded = loadHistory();
+      expect(loaded.iterations).toHaveLength(2);
+      expect(loaded.iterations[0]?.iteration).toBe(2);
+      expect(loaded.iterations[1]?.iteration).toBe(3);
+    });
   });
 
   describe("loadState", () => {

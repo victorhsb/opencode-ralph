@@ -23,6 +23,7 @@ import {
   saveHistory,
   clearHistory,
   getStateDir,
+  configureStateStorage,
 } from "../state/state";
 import {
   ensureTasksFile,
@@ -57,6 +58,8 @@ import {
 } from "../fs-tracker/fs-tracker";
 import { executeSdkIteration } from "./iteration";
 import { runVerification, summarizeVerificationFailure, type VerificationReason } from "../verification/runner";
+import { logger as console } from "../logger";
+import { PerformanceTracker } from "../performance/tracker";
 
 export interface LoopOptions {
   prompt: string;
@@ -89,6 +92,10 @@ export interface LoopOptions {
   verificationTimeoutMs?: number;
   verificationFailFast?: boolean;
   verificationMaxOutputChars?: number;
+  performanceTrackTokens?: boolean;
+  performanceEstimateCost?: boolean;
+  stateCompression?: boolean;
+  stateMaxHistory?: number;
 }
 
 export async function runRalphLoop(options: LoopOptions): Promise<void> {
@@ -120,7 +127,30 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     verificationTimeoutMs = 300000,
     verificationFailFast = true,
     verificationMaxOutputChars = 4000,
+    performanceTrackTokens = true,
+    performanceEstimateCost = true,
+    stateCompression = false,
+    stateMaxHistory = 100,
   } = options;
+
+  configureStateStorage({
+    compress: stateCompression,
+    maxHistory: stateMaxHistory,
+  });
+
+  const performanceTracker = new PerformanceTracker({
+    model,
+    trackTokens: performanceTrackTokens,
+    estimateCost: performanceEstimateCost,
+  });
+  let performanceSummaryLogged = false;
+  const logPerformanceSummary = (): void => {
+    if (performanceSummaryLogged) {
+      return;
+    }
+    performanceTracker.logSummary();
+    performanceSummaryLogged = true;
+  };
 
   const existingState = loadState();
   const resuming = !!existingState?.active;
@@ -139,12 +169,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     promptTemplate: supervisorPromptTemplatePath || undefined,
   };
 
-  console.log(`
-╔══════════════════════════════════════════════════════════════════╗
-║                    Ralph Wiggum Loop                            ║
-║         Iterative AI Development with OpenCode                    ║
-╚══════════════════════════════════════════════════════════════════╝
-`);
+  printLoopBanner();
 
   const state: RalphState = resuming && existingState ? existingState : {
     version: 1,
@@ -201,53 +226,23 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
   }
 
   if (!resuming) {
-    const promptPreview = prompt.replace(/\s+/g, " ").substring(0, 80) + (prompt.length > 80 ? "..." : "");
-    console.log(`Task: ${promptPreview}`);
-    console.log(`Completion promise: ${completionPromise}`);
-    if (tasksMode) {
-      console.log(`Tasks mode: ENABLED`);
-      console.log(`Task promise: ${taskPromise}`);
-    }
-    console.log(`Min iterations: ${minIterations}`);
-    console.log(`Max iterations: ${maxIterations > 0 ? maxIterations : "unlimited"}`);
-    if (initialModel) console.log(`Model: ${initialModel}`);
-    if (agent) console.log(`Agent: ${agent}`);
-    if (supervisorConfig.enabled) {
-      console.log(`Supervisor: ENABLED${supervisorConfig.model ? ` / ${supervisorConfig.model}` : ""}`);
-    }
-    if (state.verification?.enabled && state.verification.commands.length > 0) {
-      console.log(`Verification: ENABLED (${state.verification.mode})`);
-      for (const command of state.verification.commands) {
-        console.log(`  - ${command}`);
-      }
-    }
-    if (options.disablePlugins) {
-      console.log("OpenCode plugins: non-auth plugins disabled");
-    }
-    if (allowAllPermissions) console.log("Permissions: auto-approve all tools");
-    console.log("");
-    console.log("Starting loop... (Ctrl+C to stop)");
-    console.log("═".repeat(68));
+    logLoopStartupSummary({
+      prompt,
+      completionPromise,
+      tasksMode,
+      taskPromise,
+      minIterations,
+      maxIterations,
+      initialModel,
+      ...(agent !== undefined && { agent }),
+      supervisorConfig,
+      ...(state.verification !== undefined && { verification: state.verification }),
+      disablePlugins: options.disablePlugins,
+      allowAllPermissions,
+    });
   }
 
-  let stopping = false;
-  process.on("SIGINT", () => {
-    if (stopping) {
-      console.log("\nForce stopping...");
-      process.exit(1);
-    }
-    stopping = true;
-    console.log("\nGracefully stopping Ralph loop...");
-
-    // Close server synchronously - don't wait for async cleanup on SIGINT
-    try {
-      sdkClient.server.close();
-    } catch { }
-
-    clearState();
-    console.log("Loop cancelled.");
-    process.exit(0);
-  });
+  registerSigintHandler(sdkClient);
 
   if (state.supervisorState?.pausedForDecision && state.supervisorState.pauseIteration) {
     console.log(`⏸️  Resuming in supervisor-decision wait mode (iteration ${state.supervisorState.pauseIteration})`);
@@ -264,6 +259,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         console.log(`║  Task completed in ${state.iteration} iteration(s)`);
         console.log(`║  Total time: ${formatDurationLong(history.totalDurationMs)}`);
         console.log(`╚══════════════════════════════════════════════════════════════════╝`);
+        logPerformanceSummary();
         clearState();
         clearHistory();
         clearContextInternal();
@@ -278,6 +274,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
       console.log(`║  Max iterations (${maxIterations}) reached. Loop stopped.`);
       console.log(`║  Total time: ${formatDurationLong(history.totalDurationMs)}`);
       console.log(`╚══════════════════════════════════════════════════════════════════╝`);
+      logPerformanceSummary();
       clearState();
       break;
     }
@@ -295,6 +292,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
 
     const fullPrompt = buildPrompt(state, promptTemplatePath);
     const iterationStart = Date.now();
+    performanceTracker.startIteration(state.iteration);
 
     try {
       const sdkResult = await executeSdkIteration({
@@ -330,6 +328,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
       let shouldComplete = completionDetected;
 
       const iterationDuration = Date.now() - iterationStart;
+      performanceTracker.endIteration(sdkResult.tokenUsage);
 
       printIterationSummary({
         iteration: state.iteration,
@@ -389,157 +388,22 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         }
       }
 
-      history.iterations.push(iterationRecord);
-      history.totalDurationMs += iterationDuration;
-
-      if (filesModified.length === 0) {
-        history.struggleIndicators.noProgressIterations++;
-      } else {
-        history.struggleIndicators.noProgressIterations = 0;
-      }
-
-      if (iterationDuration < 30000) {
-        history.struggleIndicators.shortIterations++;
-      } else {
-        history.struggleIndicators.shortIterations = 0;
-      }
-
-      if (errors.length === 0) {
-        history.struggleIndicators.repeatedErrors = {};
-      } else {
-        for (const error of errors) {
-          const key = error.substring(0, 100);
-          history.struggleIndicators.repeatedErrors[key] = (history.struggleIndicators.repeatedErrors[key] || 0) + 1;
-        }
-      }
-
-      saveHistory(history);
-
-      const struggle = history.struggleIndicators;
-      if (state.iteration > 2 && (struggle.noProgressIterations >= 3 || struggle.shortIterations >= 3)) {
-        console.log(`\n⚠️  Potential struggle detected:`);
-        if (struggle.noProgressIterations >= 3) {
-          console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
-        }
-        if (struggle.shortIterations >= 3) {
-          console.log(`   - ${struggle.shortIterations} very short iterations`);
-        }
-        console.log(`   💡 Tip: Use 'ralph --add-context "hint"' in another terminal to guide the agent`);
-      }
-
-      if (detectPlaceholderPluginError(combinedOutput) || detectSdkPlaceholderPluginError(combinedOutput)) {
-        console.error(
-          "\n❌ OpenCode tried to load legacy 'ralph-wiggum' plugin. This package is CLI-only.",
-        );
-        console.error(
-          "Remove 'ralph-wiggum' from your opencode.json plugin list, or re-run with --no-plugins.",
-        );
-        clearState();
-        process.exit(1);
-      }
-
-      if (detectSdkModelNotFoundError(combinedOutput)) {
-        console.error("\n❌ Model configuration error detected.");
-        console.error("   The agent could not find a valid model to use.");
-        console.error("\n   To fix this:");
-        console.error("   1. Set a default model in ~/.config/opencode/opencode.json:");
-        console.error('      { "model": "your-provider/model-name" }');
-        console.error("   2. Or use --model flag: ralph \"task\" --model provider/model");
-        console.error("\n   See OpenCode documentation for available models.");
-        clearState();
-        process.exit(1);
-      }
+       recordIteration(history, iterationRecord, filesModified, errors, iterationDuration);
+       saveHistory(history);
+       maybeLogPotentialStruggle(state.iteration, history);
+       handleKnownFatalOutputErrors(combinedOutput);
 
       if (exitCode !== 0) {
         console.warn(`\n⚠️  OpenCode exited with code ${exitCode}. Continuing to next iteration.`);
       }
 
-      const supervisorCfg = state.supervisor;
-      if (supervisorCfg?.enabled) {
-        console.log(`\n🕵️  Running supervisor${supervisorCfg.model ? ` / ${supervisorCfg.model}` : ""}...`);
-        const supervisorResult = await runSupervisorOnce(state, supervisorCfg, history, combinedOutput, sdkClient);
-        const lastRunAt = new Date().toISOString();
-        state.supervisorState = {
-          ...(state.supervisorState ?? { enabled: true, pausedForDecision: false }),
-          enabled: true,
-          lastRunAt,
-          lastRunIteration: state.iteration,
-        };
-
-        if (!supervisorResult.ok) {
-          console.warn(`⚠️  Supervisor failed: ${supervisorResult.error}`);
-          appendSupervisorMemory(
-            {
-              iteration: state.iteration,
-              summary: "Supervisor run failed",
-              decision: supervisorResult.error ?? "unknown error",
-              timestamp: lastRunAt,
-            },
-            supervisorCfg.memoryLimit,
-          );
-        } else if (supervisorResult.noAction) {
-          console.log("✅ Supervisor: no action needed");
-          appendSupervisorMemory(
-            {
-              iteration: state.iteration,
-              summary: "No additional actions suggested",
-              decision: "no_action",
-              timestamp: lastRunAt,
-            },
-            supervisorCfg.memoryLimit,
-          );
-        } else if (supervisorResult.suggestion) {
-          const suggestion: SupervisorSuggestion = {
-            id: buildSupervisorSuggestionId(state.iteration),
-            iteration: state.iteration,
-            kind: supervisorResult.suggestion.kind,
-            title: supervisorResult.suggestion.title,
-            details: supervisorResult.suggestion.details,
-            proposedChanges: supervisorResult.suggestion.proposedChanges,
-            status: "pending",
-            createdAt: lastRunAt,
-          };
-          const suggestionStore = loadSupervisorSuggestions();
-          if (suggestionStore.parseError) {
-            console.warn(`⚠️  Could not save suggestion: ${suggestionStore.parseError}`);
-          } else {
-            suggestionStore.suggestions.push(suggestion);
-            saveSupervisorSuggestions(suggestionStore);
-            console.log(`📌 Supervisor suggestion created: ${suggestion.id}`);
-            console.log(`   Approve: ralph --approve-suggestion ${suggestion.id}`);
-            console.log(`   Reject:  ralph --reject-suggestion ${suggestion.id}`);
-            appendSupervisorMemory(
-              {
-                iteration: state.iteration,
-                summary: `${suggestion.kind}: ${suggestion.title}`,
-                decision: "pending_user_decision",
-                timestamp: lastRunAt,
-              },
-              supervisorCfg.memoryLimit,
-            );
-
-            if (shouldComplete) {
-              state.supervisorState = {
-                ...(state.supervisorState ?? { enabled: true, pausedForDecision: false }),
-                enabled: true,
-                pausedForDecision: true,
-                pauseIteration: state.iteration,
-                pauseReason: "completion_detected_with_pending_supervisor_suggestion",
-                lastRunAt,
-                lastRunIteration: state.iteration,
-              };
-              saveState(state);
-              const decisionResult = await waitForSupervisorDecisionIfNeeded(state, state.iteration);
-              if (decisionResult.approvedAppliedCount > 0) {
-                shouldComplete = false;
-                console.log("🔄 Supervisor-approved changes detected. Continuing loop instead of exiting.");
-              } else {
-                console.log("✅ All supervisor suggestions resolved without approved changes.");
-              }
-            }
-          }
-        }
-      }
+       shouldComplete = await runSupervisorFlow({
+         state,
+         history,
+         combinedOutput,
+         sdkClient,
+         shouldComplete,
+       });
 
       if (abortDetected) {
         console.log(`\n╔══════════════════════════════════════════════════════════════════╗`);
@@ -547,6 +411,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         console.log(`║  Loop aborted after ${state.iteration} iteration(s)`);
         console.log(`║  Total time: ${formatDurationLong(history.totalDurationMs)}`);
         console.log(`╚══════════════════════════════════════════════════════════════════╝`);
+        logPerformanceSummary();
         clearState();
         clearHistory();
         clearContextInternal();
@@ -568,6 +433,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
           console.log(`║  Task completed in ${state.iteration} iteration(s)`);
           console.log(`║  Total time: ${formatDurationLong(history.totalDurationMs)}`);
           console.log(`╚══════════════════════════════════════════════════════════════════╝`);
+          logPerformanceSummary();
           clearState();
           clearHistory();
           clearContextInternal();
@@ -580,16 +446,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         clearContextInternal();
       }
 
-      if (autoCommit) {
-        try {
-          const status = await $`git status --porcelain`.text();
-          if (status.trim()) {
-            await $`git add -A`;
-            await $`git commit -m "Ralph iteration ${state.iteration}: work in progress"`.quiet();
-            console.log(`📝 Auto-committed changes`);
-          }
-        } catch { }
-      }
+      await runAutoCommitIfEnabled(autoCommit, state.iteration);
 
       state.iteration++;
       saveState(state);
@@ -601,6 +458,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
       console.log("Continuing to next iteration...");
 
       const iterationDuration = Date.now() - iterationStart;
+      performanceTracker.endIteration();
       const errorRecord: IterationHistory = {
         iteration: state.iteration,
         startedAt: new Date(iterationStart).toISOString(),
@@ -623,6 +481,295 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     }
   }
 
+  logPerformanceSummary();
+
+}
+
+function printLoopBanner(): void {
+  console.log(`
+╔══════════════════════════════════════════════════════════════════╗
+║                    Ralph Wiggum Loop                            ║
+║         Iterative AI Development with OpenCode                    ║
+╚══════════════════════════════════════════════════════════════════╝
+`);
+}
+
+function logLoopStartupSummary(input: {
+  prompt: string;
+  completionPromise: string;
+  tasksMode: boolean;
+  taskPromise: string;
+  minIterations: number;
+  maxIterations: number;
+  initialModel: string;
+  agent?: string;
+  supervisorConfig: SupervisorConfig;
+  verification?: VerificationState;
+  disablePlugins: boolean;
+  allowAllPermissions: boolean;
+}): void {
+  const promptPreview = input.prompt.replace(/\s+/g, " ").substring(0, 80)
+    + (input.prompt.length > 80 ? "..." : "");
+  console.log(`Task: ${promptPreview}`);
+  console.log(`Completion promise: ${input.completionPromise}`);
+  if (input.tasksMode) {
+    console.log("Tasks mode: ENABLED");
+    console.log(`Task promise: ${input.taskPromise}`);
+  }
+  console.log(`Min iterations: ${input.minIterations}`);
+  console.log(`Max iterations: ${input.maxIterations > 0 ? input.maxIterations : "unlimited"}`);
+  if (input.initialModel) {
+    console.log(`Model: ${input.initialModel}`);
+  }
+  if (input.agent) {
+    console.log(`Agent: ${input.agent}`);
+  }
+  if (input.supervisorConfig.enabled) {
+    console.log(`Supervisor: ENABLED${input.supervisorConfig.model ? ` / ${input.supervisorConfig.model}` : ""}`);
+  }
+  if (input.verification?.enabled && input.verification.commands.length > 0) {
+    console.log(`Verification: ENABLED (${input.verification.mode})`);
+    for (const command of input.verification.commands) {
+      console.log(`  - ${command}`);
+    }
+  }
+  if (input.disablePlugins) {
+    console.log("OpenCode plugins: non-auth plugins disabled");
+  }
+  if (input.allowAllPermissions) {
+    console.log("Permissions: auto-approve all tools");
+  }
+  console.log("");
+  console.log("Starting loop... (Ctrl+C to stop)");
+  console.log("═".repeat(68));
+}
+
+function registerSigintHandler(sdkClient: SdkClient): void {
+  let stopping = false;
+  process.on("SIGINT", () => {
+    if (stopping) {
+      console.log("\nForce stopping...");
+      process.exit(1);
+    }
+    stopping = true;
+    console.log("\nGracefully stopping Ralph loop...");
+
+    try {
+      sdkClient.server.close();
+    } catch {
+      // Ignore close errors during shutdown.
+    }
+
+    clearState();
+    console.log("Loop cancelled.");
+    process.exit(0);
+  });
+}
+
+function recordIteration(
+  history: RalphHistory,
+  iterationRecord: IterationHistory,
+  filesModified: string[],
+  errors: string[],
+  iterationDuration: number,
+): void {
+  history.iterations.push(iterationRecord);
+  history.totalDurationMs += iterationDuration;
+
+  history.struggleIndicators.noProgressIterations = filesModified.length === 0
+    ? history.struggleIndicators.noProgressIterations + 1
+    : 0;
+  history.struggleIndicators.shortIterations = iterationDuration < 30000
+    ? history.struggleIndicators.shortIterations + 1
+    : 0;
+
+  if (errors.length === 0) {
+    history.struggleIndicators.repeatedErrors = {};
+    return;
+  }
+
+  for (const error of errors) {
+    const key = error.substring(0, 100);
+    history.struggleIndicators.repeatedErrors[key] = (history.struggleIndicators.repeatedErrors[key] || 0) + 1;
+  }
+}
+
+function maybeLogPotentialStruggle(iteration: number, history: RalphHistory): void {
+  const struggle = history.struggleIndicators;
+  if (iteration <= 2 || (struggle.noProgressIterations < 3 && struggle.shortIterations < 3)) {
+    return;
+  }
+
+  console.log("\n⚠️  Potential struggle detected:");
+  if (struggle.noProgressIterations >= 3) {
+    console.log(`   - No file changes in ${struggle.noProgressIterations} iterations`);
+  }
+  if (struggle.shortIterations >= 3) {
+    console.log(`   - ${struggle.shortIterations} very short iterations`);
+  }
+  console.log("   💡 Tip: Use 'ralph --add-context \"hint\"' in another terminal to guide the agent");
+}
+
+function handleKnownFatalOutputErrors(combinedOutput: string): void {
+  if (detectPlaceholderPluginError(combinedOutput) || detectSdkPlaceholderPluginError(combinedOutput)) {
+    console.error(
+      "\n❌ OpenCode tried to load legacy 'ralph-wiggum' plugin. This package is CLI-only.",
+    );
+    console.error(
+      "Remove 'ralph-wiggum' from your opencode.json plugin list, or re-run with --no-plugins.",
+    );
+    clearState();
+    process.exit(1);
+  }
+
+  if (!detectSdkModelNotFoundError(combinedOutput)) {
+    return;
+  }
+
+  console.error("\n❌ Model configuration error detected.");
+  console.error("   The agent could not find a valid model to use.");
+  console.error("\n   To fix this:");
+  console.error("   1. Set a default model in ~/.config/opencode/opencode.json:");
+  console.error('      { "model": "your-provider/model-name" }');
+  console.error("   2. Or use --model flag: ralph \"task\" --model provider/model");
+  console.error("\n   See OpenCode documentation for available models.");
+  clearState();
+  process.exit(1);
+}
+
+async function runSupervisorFlow(input: {
+  state: RalphState;
+  history: RalphHistory;
+  combinedOutput: string;
+  sdkClient: SdkClient;
+  shouldComplete: boolean;
+}): Promise<boolean> {
+  const supervisorCfg = input.state.supervisor;
+  if (!supervisorCfg?.enabled) {
+    return input.shouldComplete;
+  }
+
+  console.log(`\n🕵️  Running supervisor${supervisorCfg.model ? ` / ${supervisorCfg.model}` : ""}...`);
+  const supervisorResult = await runSupervisorOnce(
+    input.state,
+    supervisorCfg,
+    input.history,
+    input.combinedOutput,
+    input.sdkClient,
+  );
+
+  const lastRunAt = new Date().toISOString();
+  input.state.supervisorState = {
+    ...(input.state.supervisorState ?? { enabled: true, pausedForDecision: false }),
+    enabled: true,
+    lastRunAt,
+    lastRunIteration: input.state.iteration,
+  };
+
+  if (!supervisorResult.ok) {
+    console.warn(`⚠️  Supervisor failed: ${supervisorResult.error}`);
+    appendSupervisorMemory(
+      {
+        iteration: input.state.iteration,
+        summary: "Supervisor run failed",
+        decision: supervisorResult.error ?? "unknown error",
+        timestamp: lastRunAt,
+      },
+      supervisorCfg.memoryLimit,
+    );
+    return input.shouldComplete;
+  }
+
+  if (supervisorResult.noAction) {
+    console.log("✅ Supervisor: no action needed");
+    appendSupervisorMemory(
+      {
+        iteration: input.state.iteration,
+        summary: "No additional actions suggested",
+        decision: "no_action",
+        timestamp: lastRunAt,
+      },
+      supervisorCfg.memoryLimit,
+    );
+    return input.shouldComplete;
+  }
+
+  if (!supervisorResult.suggestion) {
+    return input.shouldComplete;
+  }
+
+  const suggestion: SupervisorSuggestion = {
+    id: buildSupervisorSuggestionId(input.state.iteration),
+    iteration: input.state.iteration,
+    kind: supervisorResult.suggestion.kind,
+    title: supervisorResult.suggestion.title,
+    details: supervisorResult.suggestion.details,
+    proposedChanges: supervisorResult.suggestion.proposedChanges,
+    status: "pending",
+    createdAt: lastRunAt,
+  };
+  const suggestionStore = loadSupervisorSuggestions();
+  if (suggestionStore.parseError) {
+    console.warn(`⚠️  Could not save suggestion: ${suggestionStore.parseError}`);
+    return input.shouldComplete;
+  }
+
+  suggestionStore.suggestions.push(suggestion);
+  saveSupervisorSuggestions(suggestionStore);
+  console.log(`📌 Supervisor suggestion created: ${suggestion.id}`);
+  console.log(`   Approve: ralph --approve-suggestion ${suggestion.id}`);
+  console.log(`   Reject:  ralph --reject-suggestion ${suggestion.id}`);
+  appendSupervisorMemory(
+    {
+      iteration: input.state.iteration,
+      summary: `${suggestion.kind}: ${suggestion.title}`,
+      decision: "pending_user_decision",
+      timestamp: lastRunAt,
+    },
+    supervisorCfg.memoryLimit,
+  );
+
+  if (!input.shouldComplete) {
+    return input.shouldComplete;
+  }
+
+  input.state.supervisorState = {
+    ...(input.state.supervisorState ?? { enabled: true, pausedForDecision: false }),
+    enabled: true,
+    pausedForDecision: true,
+    pauseIteration: input.state.iteration,
+    pauseReason: "completion_detected_with_pending_supervisor_suggestion",
+    lastRunAt,
+    lastRunIteration: input.state.iteration,
+  };
+  saveState(input.state);
+  const decisionResult = await waitForSupervisorDecisionIfNeeded(input.state, input.state.iteration);
+  if (decisionResult.approvedAppliedCount > 0) {
+    console.log("🔄 Supervisor-approved changes detected. Continuing loop instead of exiting.");
+    return false;
+  }
+
+  console.log("✅ All supervisor suggestions resolved without approved changes.");
+  return input.shouldComplete;
+}
+
+async function runAutoCommitIfEnabled(autoCommit: boolean, iteration: number): Promise<void> {
+  if (!autoCommit) {
+    return;
+  }
+
+  try {
+    const status = await $`git status --porcelain`.text();
+    if (!status.trim()) {
+      return;
+    }
+
+    await $`git add -A`;
+    await $`git commit -m "Ralph iteration ${iteration}: work in progress"`.quiet();
+    console.log("📝 Auto-committed changes");
+  } catch {
+    // Ignore auto-commit errors to avoid interrupting loop progress.
+  }
 }
 
 function buildInitialVerificationState(

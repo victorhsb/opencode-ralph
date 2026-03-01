@@ -19,6 +19,7 @@ import {
   SUPERVISOR_TRUNCATION_CHARS,
 } from "../config/config";
 import { checkCompletion } from "../utils/utils";
+import { logger as console } from "../logger";
 
 export type SupervisorSuggestionKind = "add_task" | "add_context";
 export type SupervisorSuggestionStatus = "pending" | "approved" | "applied" | "rejected" | "failed";

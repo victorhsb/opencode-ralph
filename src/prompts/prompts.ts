@@ -13,6 +13,7 @@ import { loadContext } from "../context/context";
 import { getTasksModeSection } from "../tasks/tasks";
 import { getTasksFilePath } from "../config/config";
 import { PromptBuilder } from "./prompt-builder";
+import { logger as console } from "../logger";
 
 /**
  * Creates the prompt header with iteration title.
@@ -233,6 +234,16 @@ function buildTasksModePrompt(state: RalphState): string {
 
   builder.addText(state.prompt, "Your Main Goal");
 
+  const verificationRules = getVerificationRulesSection(state);
+  if (verificationRules) {
+    builder.addText(verificationRules);
+  }
+
+  const verificationFailure = getVerificationFailureSection(state);
+  if (verificationFailure) {
+    builder.addText(verificationFailure);
+  }
+
   builder.addText(buildOutputFormatIntro(), "Output Format");
   builder.addList(buildOutputFormatItems());
   builder.addText(buildOutputFormatFooter());
@@ -261,6 +272,16 @@ function buildRegularPrompt(state: RalphState): string {
   }
 
   builder.addText(state.prompt, "Your Task");
+
+  const verificationRules = getVerificationRulesSection(state);
+  if (verificationRules) {
+    builder.addText(verificationRules);
+  }
+
+  const verificationFailure = getVerificationFailureSection(state);
+  if (verificationFailure) {
+    builder.addText(verificationFailure);
+  }
 
   builder.addText(buildOutputFormatIntro(), "Output Format");
   builder.addList(buildOutputFormatItems());

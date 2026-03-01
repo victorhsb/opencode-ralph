@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/victorhsb/opencode-ralph/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href="https://github.com/victorhsb/opencode-ralph/actions/workflows/ci.yml"><img src="https://github.com/victorhsb/opencode-ralph/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/victorhsb/opencode-ralph"><img src="https://img.shields.io/badge/built%20with-Bun%20%2B%20TypeScript-f472b6.svg" alt="Built with Bun + TypeScript"></a>
 </p>
 
@@ -19,7 +20,8 @@
   <a href="#what-is-opencode-ralph">What is Ralph?</a> •
   <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#commands">Commands</a>
+  <a href="#commands">Commands</a> •
+  <a href="#documentation">Documentation</a>
 </p>
 
 ---
@@ -302,6 +304,9 @@ ralph "<prompt>" [options]
 
 Options:
   --model MODEL            Model to use (e.g., anthropic/claude-sonnet-4)
+  --log-level LEVEL        Minimum log level: DEBUG|INFO|WARN|ERROR (default: INFO)
+  --log-file PATH          Write logs to this file
+  --structured-logs        Emit logs in JSON format
   --min-iterations N       Minimum iterations before completion (default: 1)
   --max-iterations N       Stop after N iterations (default: unlimited)
   --completion-promise T   Text that signals completion (default: COMPLETE)
@@ -328,6 +333,109 @@ Options:
   --allow-all              Auto-approve all permissions (default: on)
   --no-allow-all           Require interactive permission prompts
   --help                   Show help
+```
+
+### Configuration Files
+
+Ralph supports optional configuration files so you do not need to repeat common flags.
+
+Supported files:
+
+- Project JSON: `.ralphrc.json`
+- Home JSON: `~/.ralphrc.json`
+- Project TypeScript: `ralph.config.ts`
+
+Precedence order (highest to lowest):
+
+1. CLI flags
+2. Project config (`ralph.config.ts` and `.ralphrc.json`)
+3. Home config (`~/.ralphrc.json`)
+4. Built-in defaults
+
+Example `.ralphrc.json`:
+
+```json
+{
+  "model": "anthropic/claude-sonnet-4",
+  "logLevel": "INFO",
+  "structuredLogs": false,
+  "minIterations": 1,
+  "maxIterations": 20,
+  "completionPromise": "COMPLETE",
+  "verify": ["bun test", "bun run build"],
+  "verifyMode": "on-claim",
+  "performance": {
+    "trackTokens": true,
+    "estimateCost": true
+  },
+  "state": {
+    "compress": false,
+    "maxHistory": 100
+  },
+  "supervisor": true,
+  "supervisorMemoryLimit": 30
+}
+```
+
+Example `ralph.config.ts`:
+
+```ts
+export default {
+  model: "anthropic/claude-sonnet-4",
+  verify: ["bun test", "bun run build"],
+  verifyMode: "on-claim",
+  state: {
+    compress: false,
+    maxHistory: 100,
+  },
+};
+```
+
+CLI flags always win, for example:
+
+```bash
+ralph "Implement feature X" --min-iterations 3
+```
+
+This uses `minIterations = 3` even if a config file sets a different value.
+
+### Performance Monitoring
+
+Ralph now logs lightweight per-iteration performance metrics and a session summary at loop end.
+
+- Iteration duration and total session duration are always tracked.
+- Token usage is included when exposed by the SDK response.
+- Cost is estimated from model pricing heuristics and should be treated as approximate.
+
+Config file controls:
+
+```json
+{
+  "performance": {
+    "trackTokens": true,
+    "estimateCost": true
+  }
+}
+```
+
+Performance data is logged through the standard logger and is not persisted in `.ralph` state files.
+
+### State Management
+
+Ralph keeps state in JSON files by default and now supports optional compression plus bounded history size.
+
+- `state.compress` enables gzip-compressed state/history files.
+- `state.maxHistory` keeps only the latest N iteration entries in `ralph-history.json`.
+
+Config file example:
+
+```json
+{
+  "state": {
+    "compress": false,
+    "maxHistory": 100
+  }
+}
 ```
 
 ### Tasks Mode
@@ -791,6 +899,18 @@ ralph-wiggum/
 ├── install.sh / install.ps1     # Installation scripts
 └── uninstall.sh / uninstall.ps1 # Uninstallation scripts
 ```
+
+## Documentation
+
+- [Architecture Overview](ARCHITECTURE.md)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Release Process](docs/release.md)
+- ADRs:
+  - [ADR 001: SDK over subprocess](docs/adr/001-sdk-over-subprocess.md)
+  - [ADR 002: JSON over SQLite](docs/adr/002-json-over-sqlite.md)
+  - [ADR 003: Bun over Node](docs/adr/003-bun-over-node.md)
+  - [ADR 004: Configuration file design](docs/adr/004-configuration-file-design.md)
+  - [ADR 005: Error handling strategy](docs/adr/005-error-handling-strategy.md)
 
 ### State Files (in .ralph/)
 

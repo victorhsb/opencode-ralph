@@ -214,3 +214,22 @@
 - Master plan updates required:
   - Mark Phase 07 as complete
   - Document logging system
+
+## 9) Implementation Status (Iteration 5)
+
+- Status: complete
+- Implemented artifacts:
+  - `src/logger/index.ts` with level filtering (`DEBUG|INFO|WARN|ERROR`), structured JSON output, and optional file logging
+  - `src/logger/__tests__/logger.test.ts` covering filtering, structured mode, file output, and global reconfiguration
+  - Added config schema/defaults for `logLevel`, `logFile`, and `structuredLogs`
+  - Added CLI flags `--log-level`, `--log-file`, `--structured-logs` with validation
+  - Integrated logger configuration into main command boot path and migrated runtime modules to logger-backed output
+  - Updated README command/config docs with logging options
+- Verification run:
+  - `bun test ./src/logger/__tests__/logger.test.ts`
+  - `bun test ./src/cli/__tests__/program.test.ts ./src/cli/__tests__/args.test.ts`
+  - `bun test ./src/config/__tests__/loader.test.ts`
+  - `bun run build`
+- Notes for next phase:
+  - Runtime logs now route through logger abstraction (modules import `logger as console`)
+  - Default format preserves plain text output; structured logs are opt-in with `--structured-logs`

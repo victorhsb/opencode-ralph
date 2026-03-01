@@ -7,6 +7,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { RalphState } from "../state/state";
 import { getStateDir, getTasksFilePath } from "../config/config";
+import { logger as console } from "../logger";
 
 export interface Task {
   text: string;

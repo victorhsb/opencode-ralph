@@ -131,6 +131,7 @@ describe("buildPrompt", () => {
 
   test("includes verification requirements when enabled", () => {
     const state = createBaseState({
+      tasksMode: true,
       verification: {
         enabled: true,
         mode: "on-claim",
@@ -146,6 +147,7 @@ describe("buildPrompt", () => {
 
   test("includes previous verification failure feedback when last run failed", () => {
     const state = createBaseState({
+      tasksMode: true,
       verification: {
         enabled: true,
         mode: "on-claim",
@@ -164,6 +166,7 @@ describe("buildPrompt", () => {
 
   test("omits verification failure feedback after a passing run", () => {
     const state = createBaseState({
+      tasksMode: true,
       verification: {
         enabled: true,
         mode: "on-claim",
