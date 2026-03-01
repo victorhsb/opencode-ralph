@@ -30,7 +30,7 @@ Open Ralph Wiggum works exclusively with **OpenCode** using the official SDK.
 
 | Platform | Requirement |
 |----------|-------------|
-| **OpenCode** | SDK v1.2.10+ (via `@opencode-ai/sdk`pinned to 1.2.10 range) |
+| **OpenCode** | SDK v1.2.15 (pinned via `@opencode-ai/sdk`) |
 
 ---
 
@@ -238,6 +238,10 @@ The bot will respond with AI-generated analysis using the Zhipu AI model.
 ### What's Changed
 
 Version 2.0.0 is a **breaking change** that migrates from subprocess-based execution to the OpenCode SDK:
+
+### SDK Version
+
+The OpenCode SDK is **pinned to version 1.2.15** for stability. Automated dependency updates are configured via Dependabot for managed upgrades.
 
 - ✅ **SDK Integration**: Uses OpenCode SDK directly (no subprocess)
 - ❌ **Removed Agents**: Claude Code, Codex, and Copilot CLI support removed

@@ -193,14 +193,17 @@ export async function executePrompt(
     // Send prompt
     let modelConfig: { providerID: string, modelID: string } | undefined = undefined;
     if (model) {
-      const [provider, modelID] = model.split("/");
-      if (!provider || !modelID) {
-        throw new Error("invalid model format; needs to be <provider>/<model>")
+      const parts = model.split("/");
+      if (parts.length < 2) {
+        throw new Error("invalid model format; needs to be <provider>/<model>");
       }
-      modelConfig = {
-        providerID: provider,
-        modelID: modelID,
-      }
+      const provider = parts[0]
+      const modelID = parts.slice(1).join("/")
+      const
+        modelConfig = {
+          providerID: provider,
+          modelID: modelID,
+        }
       console.log("using model", modelConfig)
     }
 
