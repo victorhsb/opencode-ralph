@@ -111,6 +111,7 @@ export async function executePrompt(
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
   let output = "";
+  let eventSubscription: { stream: AsyncIterable<unknown>; unsubscribe?: () => void } | null = null;
 
   try {
     // Create fresh session
@@ -132,7 +133,7 @@ export async function executePrompt(
     const sessionId = sessionResponse.data.id;
 
     // Subscribe to events for real-time tracking
-    const eventSubscription = await client.event.subscribe();
+    eventSubscription = await client.event.subscribe();
 
     // Small delay to ensure event subscription is active before sending prompt
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -149,10 +150,15 @@ export async function executePrompt(
           lastEventTime = Date.now();
 
           // Check for session completion events
-          const eventType = (event as any)?.type;
-          if (eventType === "session.idle" || eventType === "session.error") {
-            console.log("session is idle or errored.", eventType)
+          const rawEventType = (event as any)?.type;
+          if (rawEventType === "session.idle" || rawEventType === "session.error") {
+            console.log("session is idle or errored.", rawEventType)
             sessionComplete = true;
+          }
+
+          // Debug logging for all raw events (only stringify when debug is enabled)
+          if (process.env["RALPH_DEBUG_EVENTS"] === "1") {
+            logEventDebug(rawEventType ?? "unknown", JSON.stringify(event));
           }
 
           const sdkEvent = parseSdkEvent(event);
@@ -197,13 +203,12 @@ export async function executePrompt(
       if (parts.length < 2) {
         throw new Error("invalid model format; needs to be <provider>/<model>");
       }
-      const provider = parts[0]
+      const provider = parts[0]!
       const modelID = parts.slice(1).join("/")
-      const
-        modelConfig = {
-          providerID: provider,
-          modelID: modelID,
-        }
+      modelConfig = {
+        providerID: provider,
+        modelID: modelID,
+      }
       console.log("using model", modelConfig)
     }
 
@@ -276,7 +281,27 @@ export async function executePrompt(
       success: false,
       exitCode: 1,
     };
+  } finally {
+    // Cleanup: ensure event subscription is closed to prevent resource leaks
+    if (eventSubscription?.unsubscribe) {
+      try {
+        eventSubscription.unsubscribe();
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
   }
+}
+
+/**
+ * Log event debug information when RALPH_DEBUG_EVENTS=1.
+ * Logs to stderr to avoid polluting stdout.
+ */
+function logEventDebug(eventType: string, content: string): void {
+  if (process.env["RALPH_DEBUG_EVENTS"] !== "1") return;
+  const timestamp = new Date().toISOString();
+  const size = Buffer.byteLength(content, "utf8");
+  console.error(`[DEBUG] [${timestamp}] Event: ${eventType} | Size: ${size} bytes`);
 }
 
 /**
