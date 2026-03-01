@@ -4,11 +4,18 @@
  * Handles single iteration execution in the Ralph loop.
  */
 
-import { executePrompt } from "../sdk/executor";
-import { formatToolResult } from "../sdk/output";
-import type { SdkClient } from "../sdk/client";
-import type { StructuredOutput, TokenUsage } from "../sdk/executor";
-import { logger as console } from "../logger";
+import { executePrompt } from "../sdk/executor.js";
+import { formatToolResult } from "../sdk/output.js";
+import { SubagentMonitor } from "../sdk/subagent-monitor.js";
+import {
+  formatSubagentOutput,
+  formatSubagentStart,
+  formatSubagentEnd,
+} from "../sdk/subagent-output.js";
+import type { SdkClient } from "../sdk/client.js";
+import type { StructuredOutput, TokenUsage } from "../sdk/executor.js";
+import type { SubagentInfo } from "../sdk/subagent-types.js";
+import { logger as console } from "../logger/index.js";
 
 export interface SdkIterationOptions {
   client: SdkClient;
@@ -107,13 +114,59 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
     }
   }, heartbeatIntervalMs);
 
+  let subagentMonitor: SubagentMonitor | undefined;
+  let sessionId: string | undefined;
+
   try {
+    // Create session first so we can monitor it for subagents
+    const sessionResponse = await client.client.session.create({
+      title: `Ralph iteration ${Date.now()}`,
+    });
+
+    if (sessionResponse.error || !sessionResponse.data) {
+      errors.push(`Failed to create session: ${sessionResponse.error ?? "Unknown error"}`);
+      clearInterval(heartbeatTimer);
+      return {
+        output,
+        toolCounts,
+        exitCode: 1,
+        errors,
+      };
+    }
+
+    sessionId = sessionResponse.data.id;
+
+    // Create and start subagent monitor before executing prompt
+    subagentMonitor = new SubagentMonitor({
+      client: client.client,
+      parentSessionId: sessionId,
+      onSubagentStarted: (info: SubagentInfo) => {
+        if (!silent) {
+          console.log(formatSubagentStart(info));
+        }
+      },
+      onSubagentEvent: (subagentEvent) => {
+        if (!silent && subagentEvent.event.type === "text" && subagentEvent.event.content) {
+          process.stdout.write(formatSubagentOutput(subagentEvent.subagent, subagentEvent.event.content));
+        }
+      },
+      onSubagentCompleted: (info: SubagentInfo) => {
+        if (!silent) {
+          console.log(formatSubagentEnd(info));
+        }
+      },
+    });
+
+    // Start monitoring before executing the prompt
+    await subagentMonitor.start();
+
     const result = await executePrompt(
       client.client,
       prompt,
       model ?? undefined,
       agent,
       {
+        sessionId,
         onEvent: (event) => {
           // Update event tracking for contextual heartbeat
           lastEventType = event.type;
@@ -143,11 +196,10 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
             lastPrintedAt = Date.now();
           }
         },
-      }
+      },
     );
 
     process.stdout.write("\n");
-
     output = result.output;
 
     // Note: toolCounts are already populated by the onEvent callback,
@@ -182,6 +234,9 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
   } finally {
     // Ensure heartbeat timer is always cleared to prevent resource leaks
     clearInterval(heartbeatTimer);
+    if (subagentMonitor) {
+      await subagentMonitor.stop();
+    }
   }
 }
 
