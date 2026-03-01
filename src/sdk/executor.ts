@@ -29,6 +29,8 @@ export interface ExecutionResult {
   exitCode: number;
   /** Structured output data when format is provided */
   structuredOutput?: StructuredOutput;
+  /** Session ID for the created session */
+  sessionId?: string;
 }
 
 export interface ExecutionOptions {
@@ -38,6 +40,8 @@ export interface ExecutionOptions {
   signal?: AbortSignal;
   /** JSON schema format for structured output (enables structured output when provided) */
   format?: StructuredOutputSchema;
+  /** Optional session ID to use (creates new session if not provided) */
+  sessionId?: string;
 }
 
 /** JSON schema for structured output completion detection */
@@ -56,7 +60,7 @@ export interface StructuredOutputSchema {
 
 export interface SdkEvent {
   /** Event type */
-  type: "text" | "tool_start" | "tool_end" | "thinking" | "error";
+  type: "text" | "tool_start" | "tool_end" | "thinking" | "error" | "task_spawn";
   /** Event content (if applicable) */
   content?: string;
   /** Tool name (for tool events) */
@@ -66,6 +70,11 @@ export interface SdkEvent {
     input?: Record<string, unknown>;
     output?: string;
     title?: string;
+  };
+  /** Task spawn data (for task_spawn events) */
+  taskSpawn?: {
+    agentName?: string;
+    description?: string;
   };
   /** Event timestamp */
   timestamp: number;
@@ -106,30 +115,35 @@ export async function executePrompt(
   agent: string | undefined, // agent to use
   options: ExecutionOptions
 ): Promise<ExecutionResult> {
-  const { onEvent, signal, format } = options;
+  const { onEvent, signal, format, sessionId: existingSessionId } = options;
 
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
   let output = "";
+  let sessionId: string | undefined;
 
   try {
-    // Create fresh session
-    const sessionResponse = await client.session.create({
-      title: `Ralph iteration ${Date.now()}`,
-    });
+    // Use provided session or create fresh session
+    if (existingSessionId) {
+      sessionId = existingSessionId;
+    } else {
+      const sessionResponse = await client.session.create({
+        title: `Ralph iteration ${Date.now()}`,
+      });
 
-    if (sessionResponse.error || !sessionResponse.data) {
-      errors.push(`Failed to create session: ${sessionResponse.error ?? 'Unknown error'}`);
-      return {
-        output,
-        toolCounts,
-        errors,
-        success: false,
-        exitCode: 1,
-      };
+      if (sessionResponse.error || !sessionResponse.data) {
+        errors.push(`Failed to create session: ${sessionResponse.error ?? 'Unknown error'}`);
+        return {
+          output,
+          toolCounts,
+          errors,
+          success: false,
+          exitCode: 1,
+        };
+      }
+
+      sessionId = sessionResponse.data.id;
     }
-
-    const sessionId = sessionResponse.data.id;
 
     // Subscribe to events for real-time tracking
     const eventSubscription = await client.event.subscribe();
@@ -234,6 +248,7 @@ export async function executePrompt(
         errors,
         success: false,
         exitCode: 1,
+        sessionId,
       };
     }
 
@@ -261,6 +276,7 @@ export async function executePrompt(
       errors,
       success: true,
       exitCode: 0,
+      sessionId,
     };
     if (structuredOutput !== undefined) {
       executionResult.structuredOutput = structuredOutput;
@@ -269,13 +285,17 @@ export async function executePrompt(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(errorMessage);
-    return {
+    const result: ExecutionResult = {
       output,
       toolCounts,
       errors,
       success: false,
       exitCode: 1,
     };
+    if (sessionId !== undefined) {
+      result.sessionId = sessionId;
+    }
+    return result;
   }
 }
 
@@ -334,6 +354,32 @@ function parseSdkEvent(event: unknown): SdkEvent {
       const toolName = typeof part['tool'] === "string" ? part['tool'] : "unknown";
       const state = (part['state'] || {}) as Record<string, unknown>;
       const status = typeof state['status'] === "string" ? state['status'] : "";
+
+      // Handle Task tool invocations
+      if (toolName === "task") {
+        // Extract input from either part.state.input or part.input
+        const input = (state['input'] ?? part['input']) as Record<string, unknown> | undefined;
+
+        const agentName = typeof input?.['agent'] === "string" ? input['agent'] : undefined;
+        const description = typeof input?.['description'] === "string" ? input['description'] : undefined;
+
+        // Return task_spawn event for both running and completed states
+        if (status === "running" || status === "completed") {
+          const taskSpawn: SdkEvent["taskSpawn"] = {};
+          if (agentName !== undefined) {
+            taskSpawn.agentName = agentName;
+          }
+          if (description !== undefined) {
+            taskSpawn.description = description;
+          }
+          return {
+            type: "task_spawn",
+            toolName,
+            taskSpawn,
+            timestamp,
+          };
+        }
+      }
 
       // Tool is starting (running state)
       if (status === "running") {
