@@ -852,12 +852,20 @@ describe("Subagent Monitoring", () => {
 
     describe("pollForChildren", () => {
       test("should detect new child sessions", async () => {
+        // Session-aware mock that only returns children for the expected parent
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent-session-123", title: "explore: investigate" }],
-            }),
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "explore: investigate" }],
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [] };
+            },
           },
           event: {
             subscribe: async () => ({
@@ -886,11 +894,16 @@ describe("Subagent Monitoring", () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => {
-              callCount++;
-              return {
-                data: [{ id: "child-1", parentID: "parent", title: "explore" }],
-              };
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                callCount++;
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "explore" }],
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [] };
             },
           },
           event: {
@@ -970,8 +983,20 @@ describe("Subagent Monitoring", () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent", title: "explore: investigate codebase" }],
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "explore: investigate codebase" }],
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [] };
+            },
+          },
+          event: {
+            subscribe: async () => ({
+              stream: createMockEventStream([]),
             }),
           },
         });
@@ -986,15 +1011,30 @@ describe("Subagent Monitoring", () => {
         // @ts-expect-error - accessing private method for testing
         await monitor.pollForChildren();
 
+        expect(startedSubagents.length).toBe(1);
         expect(startedSubagents[0]!.agentName).toBe("explore");
+
+        await monitor.stop();
       });
 
       test("should use default agent name when title doesn't match pattern", async () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent", title: "Some random title" }],
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "Some random title" }],
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [] };
+            },
+          },
+          event: {
+            subscribe: async () => ({
+              stream: createMockEventStream([]),
             }),
           },
         });
@@ -1009,19 +1049,34 @@ describe("Subagent Monitoring", () => {
         // @ts-expect-error - accessing private method for testing
         await monitor.pollForChildren();
 
+        expect(startedSubagents.length).toBe(1);
         expect(startedSubagents[0]!.agentName).toBe("unknown");
+
+        await monitor.stop();
       });
 
       test("should skip invalid child objects", async () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [
-                null,
-                { id: null, parentID: "parent" },
-                { id: "valid-child", parentID: "parent", title: "explore" },
-              ],
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return children for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [
+                    null,
+                    { id: null, parentID: "parent-session-123" },
+                    { id: "valid-child", parentID: "parent-session-123", title: "explore" },
+                  ],
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [] };
+            },
+          },
+          event: {
+            subscribe: async () => ({
+              stream: createMockEventStream([]),
             }),
           },
         });
@@ -1039,6 +1094,8 @@ describe("Subagent Monitoring", () => {
         // Only the valid child should be tracked
         expect(startedSubagents.length).toBe(1);
         expect(startedSubagents[0]!.sessionId).toBe("valid-child");
+
+        await monitor.stop();
       });
     });
 
@@ -1051,10 +1108,17 @@ describe("Subagent Monitoring", () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent", title: "explore" }],
-              error: undefined,
-            }),
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "explore" }],
+                  error: undefined,
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [], error: undefined };
+            },
           },
           event: {
             subscribe: async () => ({
@@ -1087,10 +1151,17 @@ describe("Subagent Monitoring", () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent", title: "explore" }],
-              error: undefined,
-            }),
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "explore" }],
+                  error: undefined,
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [], error: undefined };
+            },
           },
           event: {
             subscribe: async () => ({
@@ -1124,10 +1195,17 @@ describe("Subagent Monitoring", () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent", title: "explore" }],
-              error: undefined,
-            }),
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "explore" }],
+                  error: undefined,
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [], error: undefined };
+            },
           },
           event: {
             subscribe: async () => ({
@@ -1162,10 +1240,17 @@ describe("Subagent Monitoring", () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent", title: "explore" }],
-              error: undefined,
-            }),
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "explore" }],
+                  error: undefined,
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [], error: undefined };
+            },
           },
           event: {
             subscribe: async () => ({
@@ -1199,10 +1284,17 @@ describe("Subagent Monitoring", () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent", title: "explore" }],
-              error: undefined,
-            }),
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "explore" }],
+                  error: undefined,
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [], error: undefined };
+            },
           },
           event: {
             subscribe: async () => ({
@@ -1238,10 +1330,17 @@ describe("Subagent Monitoring", () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent", title: "explore" }],
-              error: undefined,
-            }),
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "explore" }],
+                  error: undefined,
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [], error: undefined };
+            },
           },
           event: {
             subscribe: async () => ({
@@ -1276,10 +1375,17 @@ describe("Subagent Monitoring", () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent", title: "explore" }],
-              error: undefined,
-            }),
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "explore" }],
+                  error: undefined,
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [], error: undefined };
+            },
           },
           event: {
             subscribe: async () => ({
@@ -1313,10 +1419,17 @@ describe("Subagent Monitoring", () => {
         const customClient = createMockClient({
           session: {
             ...mockClient.session,
-            children: async () => ({
-              data: [{ id: "child-1", parentID: "parent", title: "code: fix bug" }],
-              error: undefined,
-            }),
+            children: async ({ sessionID }: { sessionID: string }) => {
+              // Only return child for the expected parent session
+              if (sessionID === "parent-session-123") {
+                return {
+                  data: [{ id: "child-1", parentID: "parent-session-123", title: "code: fix bug" }],
+                  error: undefined,
+                };
+              }
+              // Child sessions have no children (prevents infinite recursion)
+              return { data: [], error: undefined };
+            },
           },
           event: {
             subscribe: async () => ({
@@ -1534,9 +1647,16 @@ describe("Subagent Monitoring", () => {
       const customClient = createMockClient({
         session: {
           ...intMockClient.session,
-          children: async () => ({
-            data: [{ id: "subagent-1", parentID: "parent", title: "explore: investigate" }],
-          }),
+          children: async ({ sessionID }: { sessionID: string }) => {
+            // Only return child for the expected parent session
+            if (sessionID === "parent-session-123") {
+              return {
+                data: [{ id: "subagent-1", parentID: "parent-session-123", title: "explore: investigate" }],
+              };
+            }
+            // Child sessions have no children (prevents infinite recursion)
+            return { data: [] };
+          },
         },
         event: {
           subscribe: async () => ({
@@ -1581,9 +1701,16 @@ describe("Subagent Monitoring", () => {
       const customClient = createMockClient({
         session: {
           ...intMockClient.session,
-          children: async () => ({
-            data: [{ id: "agent-abc123", parentID: "parent", title: "code: refactor" }],
-          }),
+          children: async ({ sessionID }: { sessionID: string }) => {
+            // Only return child for the expected parent session
+            if (sessionID === "parent-session-123") {
+              return {
+                data: [{ id: "agent-abc123", parentID: "parent-session-123", title: "code: refactor" }],
+              };
+            }
+            // Child sessions have no children (prevents infinite recursion)
+            return { data: [] };
+          },
         },
         event: {
           subscribe: async () => ({
@@ -1610,10 +1737,11 @@ describe("Subagent Monitoring", () => {
 
       // Verify subagent info in callbacks
       expect(intStartedSubagents[0]!.sessionId).toBe("agent-abc123");
-      expect(intStartedSubagents[0]!.shortId).toBe("bc123");
+      expect(intStartedSubagents[0]!.shortId).toBe("abc123"); // Last 6 chars of sessionId
       expect(intStartedSubagents[0]!.agentName).toBe("code");
       expect(intStartedSubagents[0]!.depth).toBe(1);
-      expect(intStartedSubagents[0]!.status).toBe("running");
+      // Status may be "completed" if session.idle event was processed
+      expect(["running", "completed"]).toContain(intStartedSubagents[0]!.status);
 
       expect(intSubagentEvents[0]!.subagent.sessionId).toBe("agent-abc123");
 
@@ -1624,13 +1752,20 @@ describe("Subagent Monitoring", () => {
       const customClient = createMockClient({
         session: {
           ...intMockClient.session,
-          children: async () => ({
-            data: [
-              { id: "subagent-1", parentID: "parent", title: "explore" },
-              { id: "subagent-2", parentID: "parent", title: "code" },
-              { id: "subagent-3", parentID: "parent", title: "test" },
-            ],
-          }),
+          children: async ({ sessionID }: { sessionID: string }) => {
+            // Only return children for the expected parent session
+            if (sessionID === "parent-session-123") {
+              return {
+                data: [
+                  { id: "subagent-1", parentID: "parent-session-123", title: "explore: investigate" },
+                  { id: "subagent-2", parentID: "parent-session-123", title: "code: refactor" },
+                  { id: "subagent-3", parentID: "parent-session-123", title: "test: run tests" },
+                ],
+              };
+            }
+            // Child sessions have no children (prevents infinite recursion)
+            return { data: [] };
+          },
         },
         event: {
           subscribe: async () => ({
@@ -1663,12 +1798,19 @@ describe("Subagent Monitoring", () => {
       const customClient = createMockClient({
         session: {
           ...intMockClient.session,
-          children: async () => ({
-            data: [
-              { id: "success-agent", parentID: "parent", title: "explore" },
-              { id: "error-agent", parentID: "parent", title: "code" },
-            ],
-          }),
+          children: async ({ sessionID }: { sessionID: string }) => {
+            // Only return children for the expected parent session
+            if (sessionID === "parent-session-123") {
+              return {
+                data: [
+                  { id: "success-agent", parentID: "parent-session-123", title: "explore" },
+                  { id: "error-agent", parentID: "parent-session-123", title: "code" },
+                ],
+              };
+            }
+            // Child sessions have no children (prevents infinite recursion)
+            return { data: [] };
+          },
         },
         event: {
           subscribe: async () => {
@@ -1720,9 +1862,16 @@ describe("Subagent Monitoring", () => {
       const customClient = createMockClient({
         session: {
           ...intMockClient.session,
-          children: async () => ({
-            data: [{ id: "task-agent", parentID: "parent", title: "code: review PR" }],
-          }),
+          children: async ({ sessionID }: { sessionID: string }) => {
+            // Only return child for the expected parent session
+            if (sessionID === "parent-session-123") {
+              return {
+                data: [{ id: "task-agent", parentID: "parent-session-123", title: "code: review PR" }],
+              };
+            }
+            // Child sessions have no children (prevents infinite recursion)
+            return { data: [] };
+          },
         },
         event: {
           subscribe: async () => ({

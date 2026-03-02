@@ -16,19 +16,12 @@ import { PromptBuilder } from "./prompt-builder";
 import { logger as console } from "../logger";
 
 /**
- * Creates the prompt header with iteration title.
- * Example: "# Ralph Wiggum Loop - Iteration 3"
- */
-function buildHeader(state: RalphState): string {
-  return `# Ralph Wiggum Loop - Iteration ${state.iteration}`;
-}
-
-/**
  * Builds the iteration info content (without header).
  * The title is added by PromptBuilder.
  */
 function buildIterationInfoContent(state: RalphState): string {
-  const maxInfo = state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)";
+  const maxInfo =
+    state.maxIterations > 0 ? ` / ${state.maxIterations}` : " (unlimited)";
   const minInfo = state.minIterations ?? 1;
   return `Current Iteration: ${state.iteration}${maxInfo} (min: ${minInfo})`;
 }
@@ -72,12 +65,12 @@ function buildOutputFormatFooter(): string {
 function buildCriticalRulesTasksMode(state: RalphState): string[] {
   const promiseTags = `<promise>${state.taskPromise}</promise> for task completion, <promise>${state.completionPromise}</promise> for ALL tasks done`;
   return [
-    "Work on ONE task at a time from .ralph/ralph-tasks.md",
+    "Work on ONE task at a time from your task list",
     'Set "completed" to true ONLY when the current task is complete and marked in ralph-tasks.md (or ALL tasks are done for final completion)',
     'Provide brief reasoning in the "reasoning" field about completion status',
     'Put your main response text in the "output" field',
     `The old <promise> tag format is now OPTIONAL: ${promiseTags}`,
-    "Output promise tags DIRECTLY - do not quote them, explain them, or say you \"will\" output them",
+    'Output promise tags DIRECTLY - do not quote them, explain them, or say you "will" output them',
     "Do NOT lie or output false promises to exit the loop",
     "If stuck, try a different approach",
     "Check your work before claiming completion",
@@ -94,7 +87,7 @@ function buildCriticalRulesRegularMode(state: RalphState): string[] {
     'Provide brief reasoning in the "reasoning" field about completion status',
     'Put your main response text in the "output" field',
     `The old <promise> tag format is now OPTIONAL: ${promiseTags}`,
-    "Output promise tags DIRECTLY - do not quote it, or say you \"will\" output it",
+    'Output promise tags DIRECTLY - do not quote it, or say you "will" output it',
     "Do NOT lie or output false promises to exit the loop",
     "If stuck, try a different approach",
     "Check your work before claiming completion",
@@ -112,20 +105,6 @@ function buildInstructionsContent(): string {
 3. Make progress on the task
 4. Run tests/verification if applicable
 5. When the task is GENUINELY COMPLETE, set "completed" to true`;
-}
-
-/**
- * Sets context for tasks mode: working through a task list.
- */
-function buildTasksModeIntro(): string {
-  return `You are in an iterative development loop working through a task list.`;
-}
-
-/**
- * Sets context for regular mode: single task until completion.
- */
-function buildRegularModeIntro(): string {
-  return `You are in an iterative development loop. Work on the task below until you can genuinely complete it.`;
 }
 
 /**
@@ -154,7 +133,10 @@ function buildRegularModeFooter(): string {
  * @param state - Current loop state
  * @returns Processed template string, or null if template doesn't exist
  */
-export function loadCustomPromptTemplate(templatePath: string, state: RalphState): string | null {
+export function loadCustomPromptTemplate(
+  templatePath: string,
+  state: RalphState,
+): string | null {
   if (!existsSync(templatePath)) {
     console.error(`Error: Prompt template not found: ${templatePath}`);
     process.exit(1);
@@ -173,7 +155,10 @@ export function loadCustomPromptTemplate(templatePath: string, state: RalphState
 
     template = template
       .replace(/\{\{iteration\}\}/g, String(state.iteration))
-      .replace(/\{\{max_iterations\}\}/g, state.maxIterations > 0 ? String(state.maxIterations) : "unlimited")
+      .replace(
+        /\{\{max_iterations\}\}/g,
+        state.maxIterations > 0 ? String(state.maxIterations) : "unlimited",
+      )
       .replace(/\{\{min_iterations\}\}/g, String(state.minIterations))
       .replace(/\{\{prompt\}\}/g, state.prompt)
       .replace(/\{\{completion_promise\}\}/g, state.completionPromise)
@@ -199,7 +184,10 @@ export function loadCustomPromptTemplate(templatePath: string, state: RalphState
  * @param promptTemplatePath - Optional path to custom template file
  * @returns Complete prompt string for this iteration
  */
-export function buildPrompt(state: RalphState, promptTemplatePath?: string): string {
+export function buildPrompt(
+  state: RalphState,
+  promptTemplatePath?: string,
+): string {
   if (promptTemplatePath) {
     const customPrompt = loadCustomPromptTemplate(promptTemplatePath, state);
     if (customPrompt) return customPrompt;
@@ -219,7 +207,6 @@ export function buildPrompt(state: RalphState, promptTemplatePath?: string): str
 function buildTasksModePrompt(state: RalphState): string {
   const builder = new PromptBuilder();
 
-  builder.addText(buildHeader(state));
   builder.addText(buildTasksModeIntro());
 
   const context = buildContextContent();
@@ -262,8 +249,7 @@ function buildTasksModePrompt(state: RalphState): string {
 function buildRegularPrompt(state: RalphState): string {
   const builder = new PromptBuilder();
 
-  builder.addText(buildHeader(state));
-  builder.addText(buildIterationInfoContent(state), "Current Iteration");
+  // builder.addText(buildIterationInfoContent(state), "Current Iteration");
   builder.addText(buildRegularModeIntro());
 
   const context = buildContextContent();
@@ -295,7 +281,10 @@ function buildRegularPrompt(state: RalphState): string {
 }
 
 function getVerificationRulesSection(state: RalphState): string {
-  if (!state.verification?.enabled || state.verification.commands.length === 0) {
+  if (
+    !state.verification?.enabled ||
+    state.verification.commands.length === 0
+  ) {
     return "";
   }
 
@@ -313,11 +302,16 @@ ${commands}
 }
 
 function getVerificationFailureSection(state: RalphState): string {
-  if (!state.verification?.enabled || state.verification.lastRunPassed !== false) {
+  if (
+    !state.verification?.enabled ||
+    state.verification.lastRunPassed !== false
+  ) {
     return "";
   }
 
-  const summary = state.verification.lastFailureSummary ?? "Verification failed in the previous iteration.";
+  const summary =
+    state.verification.lastFailureSummary ??
+    "Verification failed in the previous iteration.";
   const details = state.verification.lastFailureDetails
     ? `\nDetails:\n${state.verification.lastFailureDetails}`
     : "";
