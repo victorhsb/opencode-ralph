@@ -108,6 +108,20 @@ function buildInstructionsContent(): string {
 }
 
 /**
+ * Sets context for tasks mode: working through a task list.
+ */
+function buildTasksModeIntro(): string {
+  return `You are in an iterative development loop working through a task list.`;
+}
+
+/**
+ * Sets context for regular mode: single task until completion.
+ */
+function buildRegularModeIntro(): string {
+  return `You are in an iterative development loop. Work on the task below until you can genuinely complete it.`;
+}
+
+/**
  * Closing encouragement for tasks mode.
  */
 function buildTasksModeFooter(): string {
@@ -249,6 +263,7 @@ function buildTasksModePrompt(state: RalphState): string {
 function buildRegularPrompt(state: RalphState): string {
   const builder = new PromptBuilder();
 
+  // builder.addText(buildHeader(state));
   // builder.addText(buildIterationInfoContent(state), "Current Iteration");
   builder.addText(buildRegularModeIntro());
 
