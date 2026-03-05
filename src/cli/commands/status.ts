@@ -28,6 +28,7 @@ import {
   formatDuration,
 } from "../../utils/utils";
 import { getTasksFilePath } from "../../config/config";
+import { logger as console } from "../../logger";
 
 /**
  * Status command options
@@ -160,6 +161,10 @@ function displayActiveState(state: RalphState, pendingSuggestions: number): void
   if (state.supervisor?.enabled) {
     displaySupervisorStatus(state, pendingSuggestions);
   }
+
+  if (state.verification?.enabled) {
+    displayVerificationStatus(state);
+  }
 }
 
 /**
@@ -178,6 +183,28 @@ function displaySupervisorStatus(state: RalphState, pendingSuggestions: number):
 
   if (state.supervisorState?.pausedForDecision) {
     console.log(`   Sup Status:   waiting for user decision`);
+  }
+}
+
+function displayVerificationStatus(state: RalphState): void {
+  const verification = state.verification;
+  if (!verification?.enabled) {
+    return;
+  }
+
+  console.log(`   Verify:       ENABLED`);
+  console.log(`   Verify Mode:  ${verification.mode}`);
+  if (verification.commands.length > 0) {
+    console.log(`   Verify Cmds:  ${verification.commands[0]}`);
+    for (const command of verification.commands.slice(1)) {
+      console.log(`                ${command}`);
+    }
+  }
+  if (verification.lastRunIteration !== undefined) {
+    console.log(`   Verify Last:  #${verification.lastRunIteration} ${verification.lastRunPassed ? "PASS" : "FAIL"}`);
+  }
+  if (verification.lastFailureSummary) {
+    console.log(`   Verify Fail:  ${verification.lastFailureSummary}`);
   }
 }
 
@@ -202,7 +229,7 @@ function displayTasks(tasksPath: string): void {
     console.log(`\n📋 CURRENT TASKS:`);
 
     for (let i = 0; i < tasks.length; i++) {
-      const task = tasks[i];
+      const task = tasks[i]!;
       const statusIcon = task.status === "complete" ? "✅" : task.status === "in-progress" ? "🔄" : "⏸️";
       console.log(`   ${i + 1}. ${statusIcon} ${task.text}`);
 
@@ -238,7 +265,10 @@ function displayHistory(history: RalphHistory): void {
       .map(([k, v]) => `${k}(${v})`)
       .join(" ");
     const modelLabel = iter.model ?? "unknown";
-    console.log(`   #${iter.iteration}  ${formatDurationLong(iter.durationMs)}  ${modelLabel}  ${tools || "no tools"}`);
+    const verifyLabel = iter.verification
+      ? (iter.verification.allPassed ? "verify:PASS" : "verify:FAIL")
+      : "verify:-";
+    console.log(`   #${iter.iteration}  ${formatDurationLong(iter.durationMs)}  ${modelLabel}  ${verifyLabel}  ${tools || "no tools"}`);
   }
 
   displayStruggleIndicators(history);

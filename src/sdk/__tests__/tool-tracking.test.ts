@@ -33,13 +33,13 @@ function parseSdkEvent(event: unknown): SdkEvent {
   }
 
   const eventObj = event as Record<string, unknown>;
-  const eventType = typeof eventObj.type === "string" ? eventObj.type : "";
-  const props = (eventObj.properties || {}) as Record<string, unknown>;
+  const eventType = typeof eventObj["type"] === "string" ? eventObj["type"] : "";
+  const props = (eventObj["properties"] || {}) as Record<string, unknown>;
 
   // Handle message.part.delta - streaming text chunks
   if (eventType === "message.part.delta") {
-    const delta = typeof props.delta === "string" ? props.delta : "";
-    const field = typeof props.field === "string" ? props.field : "";
+    const delta = typeof props["delta"] === "string" ? props["delta"] : "";
+    const field = typeof props["field"] === "string" ? props["field"] : "";
 
     if (field === "text" && delta) {
       return {
@@ -58,12 +58,12 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
   // Handle message.part.updated - complete parts
   if (eventType === "message.part.updated") {
-    const part = (props.part || {}) as Record<string, unknown>;
-    const partType = typeof part.type === "string" ? part.type : "";
+    const part = (props["part"] || {}) as Record<string, unknown>;
+    const partType = typeof part["type"] === "string" ? part["type"] : "";
 
     // Handle tool usage
     if (partType === "tool_use") {
-      const toolName = typeof part.name === "string" ? part.name : "unknown";
+      const toolName = typeof part["name"] === "string" ? part["name"] : "unknown";
       return {
         type: "tool_start",
         toolName,
@@ -73,7 +73,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
     // Handle tool results
     if (partType === "tool_result") {
-      const toolName = typeof part.name === "string" ? part.name : "unknown";
+      const toolName = typeof part["name"] === "string" ? part["name"] : "unknown";
       return {
         type: "tool_end",
         toolName,
@@ -83,8 +83,8 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
     // Handle text parts from assistant
     if (partType === "text") {
-      const text = typeof part.text === "string" ? part.text : "";
-      const role = typeof part.role === "string" ? part.role : "";
+      const text = typeof part["text"] === "string" ? part["text"] : "";
+      const role = typeof part["role"] === "string" ? part["role"] : "";
       if (text && role === "assistant") {
         return {
           type: "text",
@@ -96,7 +96,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
     // Handle reasoning/thinking
     if (partType === "reasoning" || partType === "thinking") {
-      const text = typeof part.text === "string" ? part.text : "";
+      const text = typeof part["text"] === "string" ? part["text"] : "";
       if (text) {
         return {
           type: "thinking",
@@ -109,12 +109,13 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
   // Handle session errors
   if (eventType === "session.error") {
-    const error = (props.error || {}) as Record<string, unknown>;
+    const error = (props["error"] || {}) as Record<string, unknown>;
+    const errorData = error["data"] as Record<string, unknown> | undefined;
     const errorMessage =
-      typeof error.data?.message === "string"
-        ? error.data.message
-        : typeof error.message === "string"
-          ? error.message
+      typeof errorData?.["message"] === "string"
+        ? errorData["message"]
+        : typeof error["message"] === "string"
+          ? error["message"]
           : "Unknown error";
     return {
       type: "error",

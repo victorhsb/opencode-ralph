@@ -8,11 +8,11 @@ Open Ralph Wiggum implements the Ralph Wiggum technique - continuous self-refere
 
 ### Components
 
-1. **CLI Interface** (`ralph.ts`)
-   - Command-line argument parsing
-   - State management (.ralph/ directory)
-   - Loop orchestration
-   - Event handling (SIGINT, cleanup)
+1. **CLI Entrypoint and Commands** (`ralph.ts`, `src/cli/program.ts`, `src/cli/commands/*`)
+   - Thin entrypoint (`ralph.ts`) delegating to Commander setup
+   - Command registration via focused command modules
+   - Main command execution and option/config resolution
+   - Subcommands for status, tasks, context, suggestions, and init
 
 2. **SDK Client** (`src/sdk/client.ts`)
    - OpenCode SDK initialization
@@ -37,7 +37,7 @@ Open Ralph Wiggum implements the Ralph Wiggum technique - continuous self-refere
 ```
 User Input
     ↓
-CLI Parser (ralph.ts)
+CLI Parser (`src/cli/program.ts`)
     ↓
 State Manager (load/save .ralph/)
     ↓
@@ -54,7 +54,9 @@ Main Loop:
     ├─→ Stream events (text, tool_use, tool_result)
     ├─→ Track tools used
     ├─→ Format output (formatResponseParts)
-    ├─→ Check for completion promise
+    ├─→ Check for completion/task claims
+    ├─→ Run verification (optional; on-claim or every-iteration)
+    ├─→ Reject false completion claims when verification fails
     ├─→ Save state/history
     └─→ Check for task completion (if --tasks)
     ↓
@@ -69,6 +71,7 @@ State stored in `.ralph/` directory:
 
 - `ralph-loop.state.json` - Active loop state (running/paused, iteration count, start time)
 - `ralph-history.json` - Iteration history with metrics (duration, tools used, status)
+- `verification` state/history fields - Last verification run status and per-iteration check results
 - `ralph-context.md` - Pending context/hints for next iteration
 - `ralph-tasks.md` - Task list for Tasks Mode (created when `--tasks` is used)
 - `supervisor-suggestions.json` - Supervisor suggestions and approval status
@@ -154,6 +157,18 @@ When `--supervisor` is enabled:
    - `ralph --approve-suggestion <id>` to apply
    - `ralph --reject-suggestion <id>` to reject
 
+Supervisor remains suggestion-based. In the current implementation, verification (`--verify ...`) is the explicit completion gate/backpressure mechanism.
+
+### Verification Backpressure (MVP)
+
+When `--verify` is configured:
+
+1. Ralph runs verification commands via `/bin/sh -lc <cmd>`
+2. Commands execute sequentially (optional fail-fast)
+3. Each step records exit code, timeout status, duration, and truncated stdout/stderr snippets
+4. Failed verification updates persisted state and is injected into the next iteration prompt
+5. Completion/task claims are accepted only when the triggered verification run passes
+
 ## Configuration
 
 ### Ralph Configuration
@@ -167,6 +182,11 @@ Via CLI flags:
 - `--max-iterations N`: Stop after N iterations
 - `--completion-promise TEXT`: Completion signal (default: COMPLETE)
 - `--abort-promise TEXT`: Early abort signal
+- `--verify CMD`: Repeatable verification commands
+- `--verify-mode MODE`: `on-claim` or `every-iteration`
+- `--verify-timeout-ms N`: Per-command timeout
+- `--[no-]verify-fail-fast`: Stop verification after first failure
+- `--verify-max-output-chars N`: Stored stdout/stderr snippet length
 
 ### SDK Configuration
 
@@ -215,8 +235,14 @@ OpenCode reads from `~/.config/opencode/opencode.json`:
 
 ```
 ralph-wiggum/
-├── ralph.ts                      # Main CLI entry point
+├── ralph.ts                      # CLI bootstrap (delegates to src/cli/program.ts)
 ├── src/
+│   ├── cli/                      # Commander setup and command handlers
+│   │   ├── program.ts            # Global options + command registration
+│   │   └── commands/             # main, status, task, context, suggestion, init
+│   ├── loop/                     # Main loop orchestration
+│   │   ├── loop.ts               # Iteration lifecycle + supervisor + verification flow
+│   │   └── iteration.ts          # Single SDK execution wrapper
 │   └── sdk/                      # SDK integration layer
 │       ├── client.ts             # SDK client initialization
 │       ├── executor.ts           # Prompt execution and event handling

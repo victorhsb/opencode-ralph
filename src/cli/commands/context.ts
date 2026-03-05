@@ -13,6 +13,7 @@ import {
 } from "../../context/context";
 import { loadState } from "../../state/state";
 import { existsSync } from "fs";
+import { logger as console } from "../../logger";
 
 /**
  * Register context subcommands

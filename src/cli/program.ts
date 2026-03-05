@@ -28,11 +28,15 @@ export function createProgram(): Command {
  * @returns Configured Command instance
  */
 function configureProgram(program: Command): Command {
+  const collectRepeated = (value: string, previous: string[] = []): string[] => {
+    previous.push(value);
+    return previous;
+  };
 
   program
     .name("ralph")
     .description("Ralph Wiggum Loop - Iterative AI development with OpenCode")
-    .version(process.env.npm_package_version || "2.0.1", "-v, --version");
+    .version(process.env["npm_package_version"] || "2.0.1", "-v, --version");
 
   // Main options from RALPH_ARGS_SCHEMA
   program
@@ -40,6 +44,9 @@ function configureProgram(program: Command): Command {
     .option("-f, --file <path>", "Read prompt content from a file")
     .option("-m, --model <model>", "Model to use (e.g., anthropic/claude-sonnet-4)")
     .option("-a, --agent <agent>", "Agent to use for this session (primary agents only)")
+    .option("--log-level <level>", "Minimum log level: DEBUG|INFO|WARN|ERROR", "INFO")
+    .option("--log-file <path>", "Write logs to this file")
+    .option("--structured-logs", "Emit logs in JSON format")
     .option("-i, --min-iterations <n>", "Minimum iterations before completion allowed", parseInt, 1)
     .option("-x, --max-iterations <n>", "Maximum iterations before stopping (0 = unlimited)", parseInt, 0)
     .option("-c, --completion-promise <text>", "Phrase that signals completion", "COMPLETE")
@@ -60,15 +67,21 @@ function configureProgram(program: Command): Command {
     .option("--allow-all", "Auto-approve all tool permissions")
     .option("--no-allow-all", "Require interactive permission prompts")
     .option("--silent", "Suppress tool execution details and other descriptive output")
+    .option("--verify <cmd>", "Verification command to run after iterations (repeatable)", collectRepeated, [])
+    .option("--verify-mode <mode>", "Verification trigger mode: on-claim|every-iteration", "on-claim")
+    .option("--verify-timeout-ms <n>", "Per-verification-command timeout in milliseconds", parseInt, 300000)
+    .option("--no-verify-fail-fast", "Run all verification commands even after one fails")
+    .option("--verify-max-output-chars <n>", "Max stdout/stderr chars stored per verification step", parseInt, 4000)
     .option("--dry-run", "Print the prompt that would be sent and exit without running");
 
   // Custom validation hooks
   program.hook("preAction", (thisCommand) => {
     const opts = thisCommand.opts();
+    console.error("DEBUG: All opts:", JSON.stringify(opts, null, 2));
 
     // Validate supervisor-memory-limit
-    if (opts.supervisorMemoryLimit !== undefined) {
-      const limit = parseInt(String(opts.supervisorMemoryLimit), 10);
+    if (opts["supervisorMemoryLimit"] !== undefined) {
+      const limit = parseInt(String(opts["supervisorMemoryLimit"]), 10);
       if (isNaN(limit) || limit <= 0) {
         console.error("Error: --supervisor-memory-limit must be greater than 0");
         process.exit(1);
@@ -76,8 +89,8 @@ function configureProgram(program: Command): Command {
     }
 
     // Validate min-iterations
-    if (opts.minIterations !== undefined) {
-      const min = parseInt(String(opts.minIterations), 10);
+    if (opts["minIterations"] !== undefined) {
+      const min = parseInt(String(opts["minIterations"]), 10);
       if (isNaN(min) || min < 0) {
         console.error("Error: --min-iterations must be non-negative");
         process.exit(1);
@@ -85,10 +98,39 @@ function configureProgram(program: Command): Command {
     }
 
     // Validate max-iterations
-    if (opts.maxIterations !== undefined) {
-      const max = parseInt(String(opts.maxIterations), 10);
+    if (opts["maxIterations"] !== undefined) {
+      const max = parseInt(String(opts["maxIterations"]), 10);
       if (isNaN(max) || max < 0) {
         console.error("Error: --max-iterations must be non-negative");
+        process.exit(1);
+      }
+    }
+
+    if (opts["verifyMode"] !== undefined && !["on-claim", "every-iteration"].includes(String(opts["verifyMode"]))) {
+      console.error("Error: --verify-mode must be one of: on-claim, every-iteration");
+      process.exit(1);
+    }
+
+    if (opts["verifyTimeoutMs"] !== undefined) {
+      const timeout = parseInt(String(opts["verifyTimeoutMs"]), 10);
+      if (isNaN(timeout) || timeout <= 0) {
+        console.error("Error: --verify-timeout-ms must be greater than 0");
+        process.exit(1);
+      }
+    }
+
+    if (opts["verifyMaxOutputChars"] !== undefined) {
+      const maxChars = parseInt(String(opts["verifyMaxOutputChars"]), 10);
+      if (isNaN(maxChars) || maxChars < 200) {
+        console.error("Error: --verify-max-output-chars must be at least 200");
+        process.exit(1);
+      }
+    }
+
+    if (opts["logLevel"] !== undefined) {
+      const logLevel = String(opts["logLevel"]).toUpperCase();
+      if (!["DEBUG", "INFO", "WARN", "ERROR"].includes(logLevel)) {
+        console.error("Error: --log-level must be one of: DEBUG, INFO, WARN, ERROR");
         process.exit(1);
       }
     }

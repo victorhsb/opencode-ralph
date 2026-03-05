@@ -4,7 +4,7 @@
  * Provides functions for querying and validating OpenCode SDK agents.
  */
 
-import type { OpencodeClient } from "@opencode-ai/sdk";
+import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 
 export interface AgentInfo {
   name: string;

@@ -142,7 +142,7 @@ describe("init command", () => {
       expect(res.exitCode).toBe(0);
 
       // Verify skills are installed globally
-      const home = process.env.HOME || process.env.USERPROFILE;
+      const home = process.env["HOME"] || process.env["USERPROFILE"];
       if (home) {
         const globalSkillsPath = join(home, ".config", "opencode", "skills");
         expect(existsSync(globalSkillsPath)).toBe(true);

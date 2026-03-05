@@ -10,6 +10,8 @@ import type { Config } from "@opencode-ai/sdk/v2";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { createServer } from "net";
+import { SdkInitError } from "../errors";
+import { logger as console } from "../logger";
 
 export interface SdkClientOptions {
   /** Model identifier (e.g., "openai/gpt-4") */
@@ -53,14 +55,14 @@ export async function closeSdkServer(
     return true;
   } catch (error) {
     if (verbose) {
-      console.error("⚠️  SDK server close failed", error);
+      console.warn("⚠️  SDK server close failed", error);
     }
     return false;
   }
 }
 
 function parseFakeEventsFromEnv(): unknown[] {
-  const raw = process.env.RALPH_FAKE_EVENTS_JSON;
+  const raw = process.env['RALPH_FAKE_EVENTS_JSON'];
   if (!raw?.trim()) {
     return [{ type: "session.idle" }];
   }
@@ -76,7 +78,7 @@ function parseFakeEventsFromEnv(): unknown[] {
 }
 
 function parseFakePromptPartsFromEnv(defaultOutput: string): Array<{ type: "text"; text: string }> {
-  const raw = process.env.RALPH_FAKE_OUTPUT_PARTS_JSON;
+  const raw = process.env['RALPH_FAKE_OUTPUT_PARTS_JSON'];
   if (!raw?.trim()) {
     return [{ type: "text", text: defaultOutput }];
   }
@@ -89,10 +91,10 @@ function parseFakePromptPartsFromEnv(defaultOutput: string): Array<{ type: "text
         if (
           part &&
           typeof part === "object" &&
-          (part as Record<string, unknown>).type === "text" &&
-          typeof (part as Record<string, unknown>).text === "string"
+          (part as Record<string, unknown>)['type'] === "text" &&
+          typeof (part as Record<string, unknown>)['text'] === "string"
         ) {
-          const text = (part as Record<string, string>).text;
+          const text = (part as Record<string, string>)['text'];
           if (text !== undefined) {
             parts.push({
               type: "text",
@@ -115,7 +117,7 @@ function hasTerminalFakeEvent(events: unknown[]): boolean {
     if (!event || typeof event !== "object") {
       return false;
     }
-    const type = (event as Record<string, unknown>).type;
+    const type = (event as Record<string, unknown>)['type'];
     return type === "session.idle" || type === "session.error";
   });
 }
@@ -150,7 +152,7 @@ function loadPluginsFromConfig(configPath: string): string[] {
  */
 function loadPluginsFromExistingConfigs(): string[] {
   const userConfigPath = join(
-    process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"),
+    process.env['XDG_CONFIG_HOME'] ?? join(process.env['HOME'] ?? "", ".config"),
     "opencode",
     "opencode.json"
   );
@@ -209,8 +211,8 @@ async function findAvailablePort(hostname: string, preferredPort: number): Promi
  * - filterPlugins: SDK config.plugin (filter to auth-only)
  */
 export async function createSdkClient(options: SdkClientOptions): Promise<SdkClient> {
-  if (process.env.RALPH_FAKE_SDK === "1") {
-    const output = process.env.RALPH_FAKE_OUTPUT ?? "<promise>COMPLETE</promise>";
+  if (process.env['RALPH_FAKE_SDK'] === "1") {
+    const output = process.env['RALPH_FAKE_OUTPUT'] ?? "<promise>COMPLETE</promise>";
     const fakeEvents = parseFakeEventsFromEnv();
     const fakeParts = parseFakePromptPartsFromEnv(output);
     const client = {
@@ -251,7 +253,12 @@ export async function createSdkClient(options: SdkClientOptions): Promise<SdkCli
 
   const hostname = options.hostname ?? "127.0.0.1";
   const requestedPort = options.port ?? 4096;
-  const port = await findAvailablePort(hostname, requestedPort);
+  let port: number;
+  try {
+    port = await findAvailablePort(hostname, requestedPort);
+  } catch (error) {
+    throw new SdkInitError(`Failed to allocate SDK server port on ${hostname}.`, error);
+  }
 
   const config: Config = {};
   if (options.model !== undefined) {
@@ -285,12 +292,17 @@ export async function createSdkClient(options: SdkClientOptions): Promise<SdkCli
     config.plugin = plugins.filter((p) => /auth/i.test(p));
   }
 
-  const opencode = await createOpencode({
-    hostname,
-    port,
-    timeout: 10000, // 10 second timeout for server startup
-    config,
-  });
+  let opencode: Awaited<ReturnType<typeof createOpencode>>;
+  try {
+    opencode = await createOpencode({
+      hostname,
+      port,
+      timeout: 10000, // 10 second timeout for server startup
+      config,
+    });
+  } catch (error) {
+    throw new SdkInitError("Failed to initialize OpenCode SDK server.", error);
+  }
 
   return {
     client: opencode.client,

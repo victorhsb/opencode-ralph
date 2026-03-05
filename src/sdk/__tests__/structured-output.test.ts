@@ -25,12 +25,12 @@ function extractStructuredOutput(
   const msg = message as Record<string, unknown>;
 
   // Navigate through the response structure: info.structured_output
-  const info = msg.info as Record<string, unknown> | undefined;
+  const info = msg["info"] as Record<string, unknown> | undefined;
   if (!info) {
     return undefined;
   }
 
-  const structuredOutput = info.structured_output;
+  const structuredOutput = info["structured_output"];
   if (!structuredOutput || typeof structuredOutput !== "object") {
     return undefined;
   }
@@ -38,22 +38,22 @@ function extractStructuredOutput(
   const so = structuredOutput as Record<string, unknown>;
 
   // Validate the required 'completed' field
-  if (typeof so.completed !== "boolean") {
+  if (typeof so["completed"] !== "boolean") {
     return undefined;
   }
 
   // Build the structured output object
   const result: StructuredOutput = {
-    completed: so.completed,
+    completed: so["completed"],
   };
 
   // Add optional fields if present
-  if (typeof so.reasoning === "string") {
-    result.reasoning = so.reasoning;
+  if (typeof so["reasoning"] === "string") {
+    result.reasoning = so["reasoning"];
   }
 
-  if (typeof so.output === "string") {
-    result.output = so.output;
+  if (typeof so["output"] === "string") {
+    result.output = so["output"];
   }
 
   return result;
@@ -368,7 +368,7 @@ describe("extractStructuredOutput", () => {
       expect(result?.completed).toBe(true);
       expect(result?.reasoning).toBe("Task done");
       expect(result?.output).toBe("Result");
-      expect((result as Record<string, unknown>).extraField).toBeUndefined();
+      expect((result as unknown as Record<string, unknown>)["extraField"]).toBeUndefined();
     });
   });
 
@@ -525,10 +525,10 @@ for (const tc of testCases) {
   };
 
   if (tc.withReasoning || tc.withAll) {
-    (msg.info.structured_output as Record<string, unknown>).reasoning = "Test reasoning";
+    ((msg["info"] as Record<string, unknown>)["structured_output"] as Record<string, unknown>)["reasoning"] = "Test reasoning";
   }
   if (tc.withOutput || tc.withAll) {
-    (msg.info.structured_output as Record<string, unknown>).output = "Test output";
+    ((msg["info"] as Record<string, unknown>)["structured_output"] as Record<string, unknown>)["output"] = "Test output";
   }
 
   const result = extractStructuredOutput(msg);

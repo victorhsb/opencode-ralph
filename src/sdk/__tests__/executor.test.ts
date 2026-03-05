@@ -179,11 +179,11 @@ describe("Request Body Construction", () => {
 
       const useStructuredOutput = true;
       if (useStructuredOutput) {
-        requestBody.format = DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
+        requestBody["format"] = DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
       }
 
-      expect(requestBody.format).toBeDefined();
-      expect((requestBody.format as StructuredOutputSchema).type).toBe("json_schema");
+      expect(requestBody["format"]).toBeDefined();
+      expect((requestBody["format"] as StructuredOutputSchema).type).toBe("json_schema");
     });
 
     test("uses custom format when provided", () => {
@@ -206,11 +206,11 @@ describe("Request Body Construction", () => {
       const format = customSchema;
 
       if (useStructuredOutput) {
-        requestBody.format = format ?? DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
+        requestBody["format"] = format ?? DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
       }
 
-      expect(requestBody.format).toBe(customSchema);
-      expect((requestBody.format as StructuredOutputSchema).schema.properties.completed.description).toBe(
+      expect(requestBody["format"]).toBe(customSchema);
+      expect((requestBody["format"] as StructuredOutputSchema).schema.properties.completed.description).toBe(
         "Custom desc"
       );
     });
@@ -224,10 +224,10 @@ describe("Request Body Construction", () => {
       const format = undefined;
 
       if (useStructuredOutput) {
-        requestBody.format = format ?? DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
+        requestBody["format"] = format ?? DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
       }
 
-      expect(requestBody.format).toBe(DEFAULT_STRUCTURED_OUTPUT_SCHEMA);
+      expect(requestBody["format"]).toBe(DEFAULT_STRUCTURED_OUTPUT_SCHEMA);
     });
   });
 
@@ -241,10 +241,10 @@ describe("Request Body Construction", () => {
 
       const useStructuredOutput = false;
       if (useStructuredOutput) {
-        requestBody.format = DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
+        requestBody["format"] = DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
       }
 
-      expect(requestBody.format).toBeUndefined();
+      expect(requestBody["format"]).toBeUndefined();
     });
   });
 
@@ -258,8 +258,8 @@ describe("Request Body Construction", () => {
 
       // No useStructuredOutput handling
 
-      expect(requestBody.format).toBeUndefined();
-      expect(requestBody.parts).toHaveLength(1);
+      expect(requestBody["format"]).toBeUndefined();
+      expect(requestBody["parts"]).toHaveLength(1);
     });
 
     test("request body structure is correct", () => {
@@ -272,9 +272,9 @@ describe("Request Body Construction", () => {
         parts: [{ type: "text", text: "Build this project" }],
       };
 
-      expect(requestBody.model).toEqual({ providerID: "openai", modelID: "gpt-4" });
-      expect(requestBody.agent).toBe("build");
-      expect(requestBody.parts).toEqual([{ type: "text", text: "Build this project" }]);
+      expect(requestBody["model"]).toEqual({ providerID: "openai", modelID: "gpt-4" });
+      expect(requestBody["agent"]).toBe("build");
+      expect(requestBody["parts"]).toEqual([{ type: "text", text: "Build this project" }]);
     });
   });
 });
@@ -363,12 +363,12 @@ for (const tc of schemaTests) {
   const body: Record<string, unknown> = { parts: [{ type: "text", text: "test" }] };
 
   if (tc.useStructured) {
-    body.format = tc.hasFormat
+    body["format"] = tc.hasFormat
       ? { type: "json_schema", schema: { type: "object", properties: {}, required: [] } }
       : DEFAULT_STRUCTURED_OUTPUT_SCHEMA;
   }
 
-  const hasFormat = !!body.format;
+  const hasFormat = !!body["format"];
   console.log(`  ${tc.desc}: ${hasFormat ? "✓" : "✗"} format included`);
 }
 

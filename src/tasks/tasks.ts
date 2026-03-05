@@ -7,6 +7,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { RalphState } from "../state/state";
 import { getStateDir, getTasksFilePath } from "../config/config";
+import { logger as console } from "../logger";
 
 export interface Task {
   text: string;
@@ -58,7 +59,9 @@ export function parseTasks(content: string): Task[] {
       if (currentTask) {
         tasks.push(currentTask);
       }
-      const [, statusChar, text] = topLevelMatch;
+      const statusChar = topLevelMatch[1];
+      const text = topLevelMatch[2];
+      if (!statusChar || !text) continue;
       let status: Task["status"] = "todo";
       if (statusChar === "x") status = "complete";
       else if (statusChar === "/") status = "in-progress";
@@ -69,7 +72,9 @@ export function parseTasks(content: string): Task[] {
 
     const subtaskMatch = line.match(/^\s+- \[([ x\/])\]\s*(.+)/);
     if (subtaskMatch && currentTask) {
-      const [, statusChar, text] = subtaskMatch;
+      const statusChar = subtaskMatch[1];
+      const text = subtaskMatch[2];
+      if (!statusChar || !text) continue;
       let status: Task["status"] = "todo";
       if (statusChar === "x") status = "complete";
       else if (statusChar === "/") status = "in-progress";
@@ -191,6 +196,7 @@ export function displayTasksWithIndices(tasks: Task[]): void {
   console.log("Current tasks:");
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i];
+    if (!task) continue;
     const statusIcon = task.status === "complete" ? "✅" : task.status === "in-progress" ? "🔄" : "⏸️";
     console.log(`${i + 1}. ${statusIcon} ${task.text}`);
 

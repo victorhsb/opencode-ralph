@@ -13,6 +13,7 @@ import {
 } from "../../tasks/tasks";
 import { getTasksFilePath } from "../../config/config";
 import { existsSync } from "fs";
+import { logger as console } from "../../logger";
 
 /**
  * Register task subcommands

@@ -98,76 +98,76 @@ describe("getSupervisorPollInterval", () => {
   });
 
   test("returns value from env var when set", () => {
-    const originalValue = process.env.RALPH_SUPERVISOR_POLL_INTERVAL;
+    const originalValue = process.env["RALPH_SUPERVISOR_POLL_INTERVAL"];
     try {
-      process.env.RALPH_SUPERVISOR_POLL_INTERVAL = "5000";
+      process.env["RALPH_SUPERVISOR_POLL_INTERVAL"] = "5000";
       const interval = getSupervisorPollInterval();
       expect(interval).toBe(5000);
     } finally {
       if (originalValue !== undefined) {
-        process.env.RALPH_SUPERVISOR_POLL_INTERVAL = originalValue;
+        process.env["RALPH_SUPERVISOR_POLL_INTERVAL"] = originalValue;
       } else {
-        delete process.env.RALPH_SUPERVISOR_POLL_INTERVAL;
+        delete process.env["RALPH_SUPERVISOR_POLL_INTERVAL"];
       }
     }
   });
 
   test("handles env var as string", () => {
-    const originalValue = process.env.RALPH_SUPERVISOR_POLL_INTERVAL;
+    const originalValue = process.env["RALPH_SUPERVISOR_POLL_INTERVAL"];
     try {
-      process.env.RALPH_SUPERVISOR_POLL_INTERVAL = "1000";
+      process.env["RALPH_SUPERVISOR_POLL_INTERVAL"] = "1000";
       const interval = getSupervisorPollInterval();
       expect(interval).toBe(1000);
     } finally {
       if (originalValue !== undefined) {
-        process.env.RALPH_SUPERVISOR_POLL_INTERVAL = originalValue;
+        process.env["RALPH_SUPERVISOR_POLL_INTERVAL"] = originalValue;
       } else {
-        delete process.env.RALPH_SUPERVISOR_POLL_INTERVAL;
+        delete process.env["RALPH_SUPERVISOR_POLL_INTERVAL"];
       }
     }
   });
 
   test("returns default when env var is invalid", () => {
-    const originalValue = process.env.RALPH_SUPERVISOR_POLL_INTERVAL;
+    const originalValue = process.env["RALPH_SUPERVISOR_POLL_INTERVAL"];
     try {
-      process.env.RALPH_SUPERVISOR_POLL_INTERVAL = "invalid";
+      process.env["RALPH_SUPERVISOR_POLL_INTERVAL"] = "invalid";
       const interval = getSupervisorPollInterval();
       expect(interval).toBe(SUPERVISOR_DECISION_POLL_INTERVAL_MS);
     } finally {
       if (originalValue !== undefined) {
-        process.env.RALPH_SUPERVISOR_POLL_INTERVAL = originalValue;
+        process.env["RALPH_SUPERVISOR_POLL_INTERVAL"] = originalValue;
       } else {
-        delete process.env.RALPH_SUPERVISOR_POLL_INTERVAL;
+        delete process.env["RALPH_SUPERVISOR_POLL_INTERVAL"];
       }
     }
   });
 
   test("handles env var with negative value", () => {
-    const originalValue = process.env.RALPH_SUPERVISOR_POLL_INTERVAL;
+    const originalValue = process.env["RALPH_SUPERVISOR_POLL_INTERVAL"];
     try {
-      process.env.RALPH_SUPERVISOR_POLL_INTERVAL = "-100";
+      process.env["RALPH_SUPERVISOR_POLL_INTERVAL"] = "-100";
       const interval = getSupervisorPollInterval();
       expect(interval).toBe(-100);
     } finally {
       if (originalValue !== undefined) {
-        process.env.RALPH_SUPERVISOR_POLL_INTERVAL = originalValue;
+        process.env["RALPH_SUPERVISOR_POLL_INTERVAL"] = originalValue;
       } else {
-        delete process.env.RALPH_SUPERVISOR_POLL_INTERVAL;
+        delete process.env["RALPH_SUPERVISOR_POLL_INTERVAL"];
       }
     }
   });
 
   test("handles env var with zero value", () => {
-    const originalValue = process.env.RALPH_SUPERVISOR_POLL_INTERVAL;
+    const originalValue = process.env["RALPH_SUPERVISOR_POLL_INTERVAL"];
     try {
-      process.env.RALPH_SUPERVISOR_POLL_INTERVAL = "0";
+      process.env["RALPH_SUPERVISOR_POLL_INTERVAL"] = "0";
       const interval = getSupervisorPollInterval();
       expect(interval).toBe(0);
     } finally {
       if (originalValue !== undefined) {
-        process.env.RALPH_SUPERVISOR_POLL_INTERVAL = originalValue;
+        process.env["RALPH_SUPERVISOR_POLL_INTERVAL"] = originalValue;
       } else {
-        delete process.env.RALPH_SUPERVISOR_POLL_INTERVAL;
+        delete process.env["RALPH_SUPERVISOR_POLL_INTERVAL"];
       }
     }
   });

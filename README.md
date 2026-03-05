@@ -4,19 +4,15 @@
 </p>
 
 <p align="center">
-  <img src="screenshot.webp" alt="Open Ralph Wiggum - Iterative AI coding loop for OpenCode" />
-</p>
-
-<p align="center">
   <em>Works exclusively with <b>OpenCode</b> using the official SDK</em><br>
   <em>Based on the <a href="https://ghuntley.com/ralph/">Ralph Wiggum technique</a> by Geoffrey Huntley</em>
-  <em>Forked from <a href="https://github.com/th0rgal/ralph-wiggum.git">Ralph Wiggum technique</a> by Geoffrey Huntley</em>
+  <em>Forked from <a href="https://github.com/th0rgal/ralph-wiggum.git">ralph-wiggum</a> by @th0rgal</em>
 </p>
 
 <p align="center">
   <a href="https://github.com/victorhsb/opencode-ralph/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href="https://github.com/victorhsb/opencode-ralph/actions/workflows/ci.yml"><img src="https://github.com/victorhsb/opencode-ralph/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/victorhsb/opencode-ralph"><img src="https://img.shields.io/badge/built%20with-Bun%20%2B%20TypeScript-f472b6.svg" alt="Built with Bun + TypeScript"></a>
-  <a href="https://github.com/victorhsb/opencode-ralph/releases"><img src="https://img.shields.io/github/v/release/victorhsb/opencode-ralph?include_prereleases" alt="Release"></a>
 </p>
 
 <p align="center">
@@ -24,16 +20,8 @@
   <a href="#what-is-opencode-ralph">What is Ralph?</a> •
   <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#commands">Commands</a>
-</p>
-
-<p align="center">
-  <strong>Tired of agents breaking your local environment?</strong><br>
-  🏝️ <a href="https://github.com/Th0rgal/sandboxed.sh">sandboxed.sh</a> gives each task an isolated Linux workspace. Self-hosted. Git-backed.
-</p>
-
-<p align="center">
-  💬 <strong>Join the community:</strong> <a href="https://relens.ai/community">relens.ai/community</a>
+  <a href="#commands">Commands</a> •
+  <a href="#documentation">Documentation</a>
 </p>
 
 ---
@@ -44,7 +32,7 @@ Open Ralph Wiggum works exclusively with **OpenCode** using the official SDK.
 
 | Platform | Requirement |
 |----------|-------------|
-| **OpenCode** | SDK v0.15.0+ (pinned to 0.15.x range) |
+| **OpenCode** | SDK v1.2.15 (pinned via `@opencode-ai/sdk`) |
 
 ---
 
@@ -67,10 +55,12 @@ done
 
 - **SDK Integration** — Direct OpenCode SDK integration (no subprocess overhead)
 - **Self-Correcting Loops** — Agent sees its previous work and fixes its own mistakes
+- **Verification Backpressure (opt-in)** — Gate completion on local checks like tests/builds
 - **Autonomous Execution** — Set it running and come back to finished code
 - **Task Tracking** — Built-in task management with `--tasks` mode
 - **Live Monitoring** — Check progress with `--status` from another terminal
 - **Mid-Loop Hints** — Inject guidance with `--add-context` without stopping
+- **Supervisor** — By using `--supervisor`, between each iteration it will run a short supervisor to evaluate the work being done and suggest improvements.
 
 ## Why Use an Agentic Loop?
 
@@ -120,6 +110,68 @@ cd opencode-ralph
 
 This installs the `ralph` CLI command globally.
 
+## Project Initialization
+
+Before running your first loop, initialize Ralph in your project directory. This creates the necessary configuration files and directory structure.
+
+### `ralph init`
+
+```bash
+# Initialize Ralph in the current directory
+ralph init
+
+# Initialize without installing skills
+ralph init --no-skill
+
+# Force re-initialization (overwrite existing files)
+ralph init --force
+```
+
+### What `init` Creates
+
+The `ralph init` command sets up the following in your project:
+
+| File/Directory | Purpose |
+|----------------|---------|
+| `.ralph/` | Runtime state directory (automatically gitignored) |
+| `.ralph/ralph-tasks.md` | Starter task file for Tasks Mode |
+| `.ralph/ralph-context.md` | Context injection file (via `--add-context`) |
+| `~/.config/opencode/skills/` | OpenCode-compatible AI assistant skills |
+| `.gitignore` | Updated to exclude `.ralph/` from version control |
+
+After initialization, edit `.ralph/ralph-tasks.md` to define your project tasks before running with `--tasks` mode.
+
+### Skills System
+
+Ralph includes **OpenCode-compatible skills** - AI assistant configurations that extend OpenCode's capabilities with Ralph-specific knowledge.
+
+**Built-in Skills:**
+
+| Skill | Description |
+|-------|-------------|
+| `ralph-cli-manager` | Helps AI assistants safely manage Ralph CLI operations - tasks, monitoring, context injection |
+| `ralph-loop-plan-creator` | Assists with planning complex multi-phase projects by breaking them into dependency-ordered phases |
+
+**What Skills Provide:**
+
+- **Specialized Knowledge**: AI assistants understand Ralph's task system, monitoring commands, and best practices
+- **Safe Operations**: Guidance on when to use `--add-context`, `--status`, and task management commands
+- **Project Planning**: Automatic generation of phase-based plans with dependency ordering for complex MVPs
+
+**Skills Location:**
+
+Skills are embedded in the Ralph binary and extracted to `~/.config/opencode/skills/` during initialization. This allows OpenCode (and compatible AI assistants) to automatically discover and use them when working with Ralph projects.
+
+```bash
+# View installed skills
+ls ~/.config/opencode/skills/
+
+# Example output:
+# ralph-cli-manager/         ralph-loop-plan-creator/
+```
+
+Skills are **optional but recommended** - they enhance AI assistant effectiveness when working with Ralph-managed projects.
+
 ## Quick Start
 
 ```bash
@@ -138,6 +190,12 @@ ralph "Create a small CLI and document usage. Output <promise>COMPLETE</promise>
 
 # With supervisor
 ralph "Build API" --supervisor --max-iterations 15
+
+# With verification gating (completion rejected until checks pass)
+ralph "Implement feature and tests" \
+  --verify "bun test" \
+  --verify "bun run build" \
+  --max-iterations 20
 
 # Complex project with Tasks Mode
 ralph "Build a full-stack web application with user auth and database" \
@@ -182,6 +240,10 @@ The bot will respond with AI-generated analysis using the Zhipu AI model.
 ### What's Changed
 
 Version 2.0.0 is a **breaking change** that migrates from subprocess-based execution to the OpenCode SDK:
+
+### SDK Version
+
+The OpenCode SDK is **pinned to version 1.2.15** for stability. Automated dependency updates are configured via Dependabot for managed upgrades.
 
 - ✅ **SDK Integration**: Uses OpenCode SDK directly (no subprocess)
 - ❌ **Removed Agents**: Claude Code, Codex, and Copilot CLI support removed
@@ -242,6 +304,9 @@ ralph "<prompt>" [options]
 
 Options:
   --model MODEL            Model to use (e.g., anthropic/claude-sonnet-4)
+  --log-level LEVEL        Minimum log level: DEBUG|INFO|WARN|ERROR (default: INFO)
+  --log-file PATH          Write logs to this file
+  --structured-logs        Emit logs in JSON format
   --min-iterations N       Minimum iterations before completion (default: 1)
   --max-iterations N       Stop after N iterations (default: unlimited)
   --completion-promise T   Text that signals completion (default: COMPLETE)
@@ -254,6 +319,11 @@ Options:
   --supervisor-suggestion-promise TEXT Promise for suggested action (default: USER_DECISION_REQUIRED)
   --supervisor-memory-limit N Number of supervisor memory entries to keep (default: 20)
   --supervisor-prompt-template PATH Custom supervisor prompt template
+  --verify CMD             Verification command (repeatable)
+  --verify-mode MODE       on-claim|every-iteration (default: on-claim)
+  --verify-timeout-ms N    Per verification command timeout (default: 300000)
+  --[no-]verify-fail-fast  Stop verification on first failure (default: true)
+  --verify-max-output-chars N Max stored stdout/stderr per verify step (default: 4000)
   --prompt-file, --file, -f  Read prompt content from a file
   --prompt-template PATH   Use custom prompt template (see Custom Prompts)
   --no-stream              Buffer output and print at the end
@@ -263,6 +333,109 @@ Options:
   --allow-all              Auto-approve all permissions (default: on)
   --no-allow-all           Require interactive permission prompts
   --help                   Show help
+```
+
+### Configuration Files
+
+Ralph supports optional configuration files so you do not need to repeat common flags.
+
+Supported files:
+
+- Project JSON: `.ralphrc.json`
+- Home JSON: `~/.ralphrc.json`
+- Project TypeScript: `ralph.config.ts`
+
+Precedence order (highest to lowest):
+
+1. CLI flags
+2. Project config (`ralph.config.ts` and `.ralphrc.json`)
+3. Home config (`~/.ralphrc.json`)
+4. Built-in defaults
+
+Example `.ralphrc.json`:
+
+```json
+{
+  "model": "anthropic/claude-sonnet-4",
+  "logLevel": "INFO",
+  "structuredLogs": false,
+  "minIterations": 1,
+  "maxIterations": 20,
+  "completionPromise": "COMPLETE",
+  "verify": ["bun test", "bun run build"],
+  "verifyMode": "on-claim",
+  "performance": {
+    "trackTokens": true,
+    "estimateCost": true
+  },
+  "state": {
+    "compress": false,
+    "maxHistory": 100
+  },
+  "supervisor": true,
+  "supervisorMemoryLimit": 30
+}
+```
+
+Example `ralph.config.ts`:
+
+```ts
+export default {
+  model: "anthropic/claude-sonnet-4",
+  verify: ["bun test", "bun run build"],
+  verifyMode: "on-claim",
+  state: {
+    compress: false,
+    maxHistory: 100,
+  },
+};
+```
+
+CLI flags always win, for example:
+
+```bash
+ralph "Implement feature X" --min-iterations 3
+```
+
+This uses `minIterations = 3` even if a config file sets a different value.
+
+### Performance Monitoring
+
+Ralph now logs lightweight per-iteration performance metrics and a session summary at loop end.
+
+- Iteration duration and total session duration are always tracked.
+- Token usage is included when exposed by the SDK response.
+- Cost is estimated from model pricing heuristics and should be treated as approximate.
+
+Config file controls:
+
+```json
+{
+  "performance": {
+    "trackTokens": true,
+    "estimateCost": true
+  }
+}
+```
+
+Performance data is logged through the standard logger and is not persisted in `.ralph` state files.
+
+### State Management
+
+Ralph keeps state in JSON files by default and now supports optional compression plus bounded history size.
+
+- `state.compress` enables gzip-compressed state/history files.
+- `state.maxHistory` keeps only the latest N iteration entries in `ralph-history.json`.
+
+Config file example:
+
+```json
+{
+  "state": {
+    "compress": false,
+    "maxHistory": 100
+  }
+}
 ```
 
 ### Tasks Mode
@@ -727,6 +900,18 @@ ralph-wiggum/
 └── uninstall.sh / uninstall.ps1 # Uninstallation scripts
 ```
 
+## Documentation
+
+- [Architecture Overview](ARCHITECTURE.md)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Release Process](docs/release.md)
+- ADRs:
+  - [ADR 001: SDK over subprocess](docs/adr/001-sdk-over-subprocess.md)
+  - [ADR 002: JSON over SQLite](docs/adr/002-json-over-sqlite.md)
+  - [ADR 003: Bun over Node](docs/adr/003-bun-over-node.md)
+  - [ADR 004: Configuration file design](docs/adr/004-configuration-file-design.md)
+  - [ADR 005: Error handling strategy](docs/adr/005-error-handling-strategy.md)
+
 ### State Files (in .ralph/)
 
 During operation, Ralph stores state in `.ralph/` (automatically created and gitignored):
@@ -745,19 +930,22 @@ During operation, Ralph stores state in `.ralph/` (automatically created and git
 npm uninstall -g @victorhsb/opencode-ralph
 ```
 
-```powershell
-npm uninstall -g @victorhsb/opencode-ralph
-```
-
 ## Learn More
 
 - [Original Ralph Wiggum technique by Geoffrey Huntley](https://ghuntley.com/ralph/)
 - [Ralph Orchestrator](https://github.com/mikeyobrien/ralph-orchestrator)
 
-## See Also
-
-Check out 🏝️ [sandboxed.sh](https://github.com/Th0rgal/sandboxed.sh) — a dashboard for orchestrating AI agents with workspace management, real-time monitoring, and multi-agent workflows.
-
 ## License
 
 MIT
+### Verification and Completion Gating
+
+Verification is opt-in via `--verify`.
+
+- Verification commands run in the order provided.
+- Default mode is `--verify-mode on-claim`, which runs checks only when the agent claims completion (or task completion in tasks mode).
+- `--verify-mode every-iteration` runs checks after every iteration.
+- If the agent claims completion and any verification command fails or times out, Ralph rejects the completion claim and continues the loop.
+- Verification failures are stored in `.ralph/ralph-loop.state.json` / `.ralph/ralph-history.json` and injected into the next iteration prompt as explicit feedback.
+
+This is the current hard reliability gate. Supervisor mode remains suggestion-based and does not replace verification checks.
