@@ -25,10 +25,12 @@ Use this as `plans/master-plan.md`.
 
 Keep one row per phase and one phase per task.
 
-| Phase | Plan file | Primary outcome | Depends on | Verification gate | Completion tag |
+| Phase | Plan file | Primary outcome | Depends on | Verification gate | Optional tag |
 | --- | --- | --- | --- | --- | --- |
 | 01 | plans/phase-01-plan.md |  |  |  | READY_FOR_NEXT_TASK |
 | 02 | plans/phase-02-plan.md |  |  |  | READY_FOR_NEXT_TASK |
+
+*Note*: "Optional tag" is for human readability; Ralph uses JSON `completed` field for actual completion tracking.
 
 ## 5) Cross-Phase Contracts
 
@@ -57,9 +59,11 @@ Keep one row per phase and one phase per task.
 
 ## 9) Phase Exit and Final Exit Criteria
 
-- Phase exit criteria rule:
-- Final completion criteria rule:
-- Promise tags in use (`READY_FOR_NEXT_TASK`, `COMPLETE`, or custom):
+**Note**: Ralph handles completion signaling (JSON `completed` field, iteration tracking). This section defines domain-specific "done" criteria:
+
+- What constitutes a complete phase (domain outcome):
+- What constitutes final MVP completion:
+- Optional: preferred completion tags (`READY_FOR_NEXT_TASK`, `COMPLETE`) for human readability
 
 ## 10) Decision Log
 

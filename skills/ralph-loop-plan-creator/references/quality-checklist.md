@@ -22,6 +22,7 @@ Pass every item before final handoff.
 - Optional resources are clearly marked optional.
 - Unnecessary repository-wide context is excluded.
 - Every phase file is focused on one primary outcome.
+- Phase plans do NOT duplicate Ralph's built-in instructions (output format, completion rules, iteration tracking).
 
 ## Verifiability
 

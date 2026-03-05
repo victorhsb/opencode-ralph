@@ -47,20 +47,22 @@ List only what is necessary for this phase.
 
 ## 6) Verification
 
-Run checks that prove this phase is complete.
+List what Ralph should verify for this phase. Ralph manages verification execution via its built-in verification system.
 
-- Command:
+- What to verify (command Ralph should run):
 - Expected result:
-- Failure triage note:
+- How to interpret failures:
 
-## 7) Completion Contract
-
-- Emit promise tag:
-- Conditions before emitting the tag:
-
-## 8) Handoff to Next Phase
+## 7) Handoff to Next Phase
 
 - Artifacts produced:
 - What changed that next phase must know:
 - New risks or assumptions:
 - Master plan updates required:
+
+## 8) Completion Signal
+
+**NOTE**: Ralph handles completion signaling automatically. This section is for reference only:
+- Ralph expects `completed: true` in JSON response when phase work is genuinely done
+- Ralph manages iteration bounds and task progression
+- Promise tags are optional (Ralph uses JSON `completed` field primarily)

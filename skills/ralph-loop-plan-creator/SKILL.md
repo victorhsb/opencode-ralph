@@ -10,6 +10,18 @@ description: "Create planning-mode artifacts for Ralph loops that implement comp
 Create a planning pack that lets Ralph execute complex work with minimal context per iteration.
 Produce one task-scoped phase plan per task and one master plan that controls phase order, dependencies, and verification.
 
+### What Ralph Already Handles (Don't Redefine)
+
+Ralph's default prompt template already manages iteration mechanics. Do NOT include these in phase plans:
+
+- **Output format**: Ralph instructs agents to use `completed`, `reasoning`, and `output` JSON fields
+- **Completion signaling**: Ralph defines when to set `completed: true` and how promise tags work
+- **Iteration tracking**: Ralph provides current iteration, max/min bounds, and progress context
+- **Task mode behavior**: Ralph handles "work on one task at a time" and task list progression
+- **Critical rules**: Ralph already covers "don't lie about completion", "check work first", etc.
+
+Phase plans should focus ONLY on domain-specific work: what to build, files to modify, and phase-specific verification.
+
 ## Required Outputs
 
 Create these files unless the repository already has an equivalent convention:
@@ -73,14 +85,14 @@ For each `phase-NN-plan.md`, include:
 - exact files, modules, and docs to read first
 - interfaces and contracts that must be preserved
 - implementation sequence with checkpoints
-- verification commands and expected results
-- completion contract (`READY_FOR_NEXT_TASK` vs `COMPLETE`)
+- verification commands and expected results (Ralph runs these; phase plan lists what to verify)
 - handoff notes that feed the next phase
 
 Keep context tight:
 - include only resources required for that phase
 - mark optional deep-dive resources separately
 - avoid broad project history unless required for correctness
+- rely on Ralph's built-in iteration handling for completion signaling and output format
 
 ### 5) Sync Plans Into Ralph Tasks via ralph-cli-manager
 
