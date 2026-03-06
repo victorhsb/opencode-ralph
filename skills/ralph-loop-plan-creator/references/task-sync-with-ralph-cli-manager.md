@@ -2,6 +2,17 @@
 
 Use this workflow to keep phase plans and Ralph task state aligned.
 
+## ⚠️ PREREQUISITE: Load ralph-cli-manager Skill
+
+**Before executing ANY commands in this reference, invoke the ralph-cli-manager skill.**
+
+This reference provides planning-specific sync patterns, but the ralph-cli-manager skill contains:
+- Critical safety rules (what commands are safe vs. forbidden)
+- Complete command reference
+- Best practices for Ralph CLI operations
+
+**Do NOT proceed with CLI operations until you have loaded ralph-cli-manager.**
+
 ## Safety Rule
 
 - Manage task state only.
