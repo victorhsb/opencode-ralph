@@ -238,24 +238,24 @@ describe("init command", () => {
   });
 
   describe("creates starter files", () => {
-    test("creates ralph-tasks.md and ralph-context.md", () => {
+    test("creates tasks.md and context.md", () => {
       const cwd = makeTempDir();
       const res = runRalphSync(cwd, ["init"]);
       expect(res.exitCode).toBe(0);
 
       const ralphDir = join(cwd, ".ralph");
-      expect(existsSync(join(ralphDir, "ralph-tasks.md"))).toBe(true);
-      expect(existsSync(join(ralphDir, "ralph-context.md"))).toBe(true);
+      expect(existsSync(join(ralphDir, "tasks.md"))).toBe(true);
+      expect(existsSync(join(ralphDir, "context.md"))).toBe(true);
 
       // Verify content
       const tasksContent = readFileSync(
-        join(ralphDir, "ralph-tasks.md"),
+        join(ralphDir, "tasks.md"),
         "utf-8",
       );
       expect(tasksContent).toContain("# Ralph Tasks");
 
       const contextContent = readFileSync(
-        join(ralphDir, "ralph-context.md"),
+        join(ralphDir, "context.md"),
         "utf-8",
       );
       expect(contextContent).toContain("# Ralph Context");

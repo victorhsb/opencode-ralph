@@ -134,12 +134,12 @@ The `ralph init` command sets up the following in your project:
 | File/Directory | Purpose |
 |----------------|---------|
 | `.ralph/` | Runtime state directory (automatically gitignored) |
-| `.ralph/ralph-tasks.md` | Starter task file for Tasks Mode |
-| `.ralph/ralph-context.md` | Context injection file (via `--add-context`) |
+| `.ralph/tasks.md` | Starter task file for Tasks Mode |
+| `.ralph/context.md` | Context injection file (via `--add-context`) |
 | `~/.config/opencode/skills/` | OpenCode-compatible AI assistant skills |
 | `.gitignore` | Updated to exclude `.ralph/` from version control |
 
-After initialization, edit `.ralph/ralph-tasks.md` to define your project tasks before running with `--tasks` mode.
+After initialization, edit `.ralph/tasks.md` to define your project tasks before running with `--tasks` mode.
 
 ### Skills System
 
@@ -425,7 +425,7 @@ Performance data is logged through the standard logger and is not persisted in `
 Ralph keeps state in JSON files by default and now supports optional compression plus bounded history size.
 
 - `state.compress` enables gzip-compressed state/history files.
-- `state.maxHistory` keeps only the latest N iteration entries in `ralph-history.json`.
+- `state.maxHistory` keeps only the latest N iteration entries in `history.json`.
 
 Config file example:
 
@@ -473,7 +473,7 @@ ralph --reject-suggestion <id>
 
 #### How Tasks Mode Works
 
-1. **Task File**: Tasks are stored in `.ralph/ralph-tasks.md`
+1. **Task File**: Tasks are stored in `.ralph/tasks.md`
 2. **One Task Per Iteration**: Ralph focuses on a single task to reduce confusion
 3. **Automatic Progression**: When a task completes (`<promise>READY_FOR_NEXT_TASK</promise>`), Ralph moves to the next
 4. **Persistent State**: Tasks survive loop restarts
@@ -915,10 +915,10 @@ ralph-wiggum/
 ### State Files (in .ralph/)
 
 During operation, Ralph stores state in `.ralph/` (automatically created and gitignored):
-- `ralph-loop.state.json` - Active loop state (running/paused, iteration count)
-- `ralph-history.json` - Iteration history with metrics (duration, tools used)
-- `ralph-context.md` - Pending context/hints for next iteration (via `--add-context`)
-- `ralph-tasks.md` - Task list for Tasks Mode (created when `--tasks` is used)
+- `state.json` - Active loop state (running/paused, iteration count)
+- `history.json` - Iteration history with metrics (duration, tools used)
+- `context.md` - Pending context/hints for next iteration (via `--add-context`)
+- `tasks.md` - Task list for Tasks Mode (created when `--tasks` is used)
 - `supervisor-suggestions.json` - Supervisor suggestions and approval status
 - `supervisor-memory.md` - Rolling supervisor memory across iterations
 
@@ -946,6 +946,6 @@ Verification is opt-in via `--verify`.
 - Default mode is `--verify-mode on-claim`, which runs checks only when the agent claims completion (or task completion in tasks mode).
 - `--verify-mode every-iteration` runs checks after every iteration.
 - If the agent claims completion and any verification command fails or times out, Ralph rejects the completion claim and continues the loop.
-- Verification failures are stored in `.ralph/ralph-loop.state.json` / `.ralph/ralph-history.json` and injected into the next iteration prompt as explicit feedback.
+- Verification failures are stored in `.ralph/state.json` / `.ralph/history.json` and injected into the next iteration prompt as explicit feedback.
 
 This is the current hard reliability gate. Supervisor mode remains suggestion-based and does not replace verification checks.

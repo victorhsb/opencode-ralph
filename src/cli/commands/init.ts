@@ -184,7 +184,7 @@ export function initCommandAction(options: InitOptions): void {
 
   console.log("\n✅ Ralph initialized successfully!");
   console.log("\n📝 Next steps:");
-  console.log("   1. Edit .ralph/ralph-tasks.md to add your tasks");
+  console.log("   1. Edit .ralph/tasks.md to add your tasks");
   console.log("   2. Run 'ralph task list' to view your tasks");
   console.log(
     "   3. Run 'ralph \"your prompt\" --tasks' to start working on tasks",
@@ -199,23 +199,23 @@ export function initCommandAction(options: InitOptions): void {
 function createStarterFiles(ralphDirPath: string): void {
   console.log("📝 Creating starter files...");
 
-  // Create ralph-tasks.md
-  const tasksPath = join(ralphDirPath, "ralph-tasks.md");
+  // Create tasks.md
+  const tasksPath = join(ralphDirPath, "tasks.md");
   try {
     writeFileSync(tasksPath, TASKS_FILE_CONTENT, "utf-8");
-    console.log("   ✓ Created ralph-tasks.md");
+    console.log("   ✓ Created tasks.md");
   } catch (error) {
-    console.error("   ✗ Error creating ralph-tasks.md:", error);
+    console.error("   ✗ Error creating tasks.md:", error);
     process.exit(1);
   }
 
-  // Create ralph-context.md
-  const contextPath = join(ralphDirPath, "ralph-context.md");
+  // Create context.md
+  const contextPath = join(ralphDirPath, "context.md");
   try {
     writeFileSync(contextPath, CONTEXT_FILE_CONTENT, "utf-8");
-    console.log("   ✓ Created ralph-context.md");
+    console.log("   ✓ Created context.md");
   } catch (error) {
-    console.error("   ✗ Error creating ralph-context.md:", error);
+    console.error("   ✗ Error creating context.md:", error);
     process.exit(1);
   }
 }

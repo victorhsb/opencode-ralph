@@ -213,7 +213,7 @@ export function getTasksModeSection(state: RalphState): string {
     return `
 ## TASKS MODE: Enabled (no tasks file found)
 
-Create .ralph/ralph-tasks.md with your task list, or use \`ralph --add-task "description"\` to add tasks.
+Create .ralph/tasks.md with your task list, or use \`ralph --add-task "description"\` to add tasks.
 `;
   }
 
@@ -228,11 +228,11 @@ Create .ralph/ralph-tasks.md with your task list, or use \`ralph --add-task "des
       taskInstructions = `
 🔄 CURRENT TASK: "${currentTask.text}"
    Focus on completing this specific task.
-   When done: Mark as [x] in .ralph/ralph-tasks.md and output <promise>${state.taskPromise}</promise>`;
+   When done: Mark as [x] in .ralph/tasks.md and output <promise>${state.taskPromise}</promise>`;
     } else if (nextTask) {
       taskInstructions = `
 📍 NEXT TASK: "${nextTask.text}"
-   Mark as [/] in .ralph/ralph-tasks.md before starting.
+   Mark as [/] in .ralph/tasks.md before starting.
    When done: Mark as [x] and output <promise>${state.taskPromise}</promise>`;
     } else if (allTasksComplete(tasks)) {
       taskInstructions = `
@@ -240,13 +240,13 @@ Create .ralph/ralph-tasks.md with your task list, or use \`ralph --add-task "des
    Output <promise>${state.completionPromise}</promise> to finish.`;
     } else {
       taskInstructions = `
-📋 No tasks found. Add tasks to .ralph/ralph-tasks.md or use \`ralph --add-task\``;
+📋 No tasks found. Add tasks to .ralph/tasks.md or use \`ralph --add-task\``;
     }
 
     return `
 ## TASKS MODE: Working through task list
 
-Current tasks from .ralph/ralph-tasks.md:
+Current tasks from .ralph/tasks.md:
 \`\`\`markdown
 ${tasksContent.trim()}
 \`\`\`
@@ -254,7 +254,7 @@ ${taskInstructions}
 
 ### Task Workflow
 1. Find any task marked [/] (in progress). If none, pick the first [ ] task.
-2. Mark the task as [/] in ralph-tasks.md before starting.
+2. Mark the task as [/] in tasks.md before starting.
 3. Complete the task.
 4. Mark as [x] when verified complete.
 5. Output <promise>${state.taskPromise}</promise> to move to the next task.
@@ -266,7 +266,7 @@ ${taskInstructions}
     return `
 ## TASKS MODE: Error reading tasks file
 
-Unable to read .ralph/ralph-tasks.md
+Unable to read .ralph/tasks.md
 `;
   }
 }

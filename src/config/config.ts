@@ -14,10 +14,10 @@ export const STATE_DIR_NAME = ".ralph";
 /**
  * State file names
  */
-export const STATE_FILE = "ralph-loop.state.json";
-export const HISTORY_FILE = "ralph-history.json";
-export const CONTEXT_FILE = "ralph-context.md";
-export const TASKS_FILE = "ralph-tasks.md";
+export const STATE_FILE = "state.json";
+export const HISTORY_FILE = "history.json";
+export const CONTEXT_FILE = "context.md";
+export const TASKS_FILE = "tasks.md";
 export const SUPERVISOR_MEMORY_FILE = "supervisor-memory.md";
 export const SUPERVISOR_SUGGESTIONS_FILE = "supervisor-suggestions.json";
 

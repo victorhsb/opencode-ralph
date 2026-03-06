@@ -66,7 +66,7 @@ function buildCriticalRulesTasksMode(state: RalphState): string[] {
   const promiseTags = `<promise>${state.taskPromise}</promise> for task completion, <promise>${state.completionPromise}</promise> for ALL tasks done`;
   return [
     "Work on ONE task at a time from your task list",
-    'Set "completed" to true ONLY when the current task is complete and marked in ralph-tasks.md (or ALL tasks are done for final completion)',
+    'Set "completed" to true ONLY when the current task is complete and marked in tasks.md (or ALL tasks are done for final completion)',
     'Provide brief reasoning in the "reasoning" field about completion status',
     'Put your main response text in the "output" field',
     `The old <promise> tag format is now OPTIONAL: ${promiseTags}`,
@@ -125,7 +125,7 @@ function buildRegularModeIntro(): string {
  * Closing encouragement for tasks mode.
  */
 function buildTasksModeFooter(): string {
-  return `Tasks Mode: ENABLED - Work on one task at a time from ralph-tasks.md
+  return `Tasks Mode: ENABLED - Work on one task at a time from tasks.md
 
 Now, work on the current task. Good luck!`;
 }

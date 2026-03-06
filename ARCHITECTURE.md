@@ -69,11 +69,11 @@ Cleanup (close SDK server)
 
 State stored in `.ralph/` directory:
 
-- `ralph-loop.state.json` - Active loop state (running/paused, iteration count, start time)
-- `ralph-history.json` - Iteration history with metrics (duration, tools used, status)
+- `state.json` - Active loop state (running/paused, iteration count, start time)
+- `history.json` - Iteration history with metrics (duration, tools used, status)
 - `verification` state/history fields - Last verification run status and per-iteration check results
-- `ralph-context.md` - Pending context/hints for next iteration
-- `ralph-tasks.md` - Task list for Tasks Mode (created when `--tasks` is used)
+- `context.md` - Pending context/hints for next iteration
+- `tasks.md` - Task list for Tasks Mode (created when `--tasks` is used)
 - `supervisor-suggestions.json` - Supervisor suggestions and approval status
 - `supervisor-memory.md` - Rolling supervisor memory across iterations
 
@@ -133,7 +133,7 @@ Tools are tracked via event observation:
 
 When `--tasks` is enabled:
 
-1. **Task File**: Tasks stored in `.ralph/ralph-tasks.md`
+1. **Task File**: Tasks stored in `.ralph/tasks.md`
 2. **One Task Per Iteration**: Ralph focuses on single task
 3. **Automatic Progression**:
    - Agent outputs `<promise>READY_FOR_NEXT_TASK</promise>`
@@ -248,10 +248,10 @@ ralph-wiggum/
 │       ├── executor.ts           # Prompt execution and event handling
 │       └── output.ts             # Response and event formatting
 ├── .ralph/                       # Runtime state directory
-│   ├── ralph-loop.state.json     # Active loop state
-│   ├── ralph-history.json        # Iteration history
-│   ├── ralph-context.md          # Pending context
-│   ├── ralph-tasks.md            # Task list (when --tasks enabled)
+│   ├── state.json            # Active loop state
+│   ├── history.json        # Iteration history
+│   ├── context.md          # Pending context
+│   ├── tasks.md            # Task list (when --tasks enabled)
 │   ├── supervisor-suggestions.json  # Supervisor suggestions
 │   └── supervisor-memory.md      # Supervisor memory
 ├── bin/

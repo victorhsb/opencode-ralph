@@ -71,7 +71,7 @@
 
 - Data model contracts to preserve:
   - State file format in `.ralph/` (until Phase 02 validates it)
-  - Task file format in `.ralph/ralph-tasks.md`
+  - Task file format in `.ralph/tasks.md`
   - CLI argument interface (flags, defaults)
 
 - API and interface contracts to preserve:

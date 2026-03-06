@@ -48,10 +48,10 @@ describe("Configuration constants", () => {
   });
 
   test("State file names are correct", () => {
-    expect(STATE_FILE).toBe("ralph-loop.state.json");
-    expect(HISTORY_FILE).toBe("ralph-history.json");
-    expect(CONTEXT_FILE).toBe("ralph-context.md");
-    expect(TASKS_FILE).toBe("ralph-tasks.md");
+    expect(STATE_FILE).toBe("state.json");
+    expect(HISTORY_FILE).toBe("history.json");
+    expect(CONTEXT_FILE).toBe("context.md");
+    expect(TASKS_FILE).toBe("tasks.md");
     expect(SUPERVISOR_MEMORY_FILE).toBe("supervisor-memory.md");
     expect(SUPERVISOR_SUGGESTIONS_FILE).toBe("supervisor-suggestions.json");
   });

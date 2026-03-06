@@ -71,7 +71,7 @@ describe("supervisor cli", () => {
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain("approved and applied");
 
-    const tasks = readFileSync(join(ralphDir, "ralph-tasks.md"), "utf-8");
+    const tasks = readFileSync(join(ralphDir, "tasks.md"), "utf-8");
     expect(tasks).toContain("- [ ] Document supervisor behavior");
 
     const updated = JSON.parse(readFileSync(suggestionFile, "utf-8"));
@@ -200,7 +200,7 @@ describe("verification cli", () => {
     mkdirSync(ralphDir, { recursive: true });
 
     writeFileSync(
-      join(ralphDir, "ralph-loop.state.json"),
+      join(ralphDir, "state.json"),
       JSON.stringify(
         {
           version: 1,
@@ -229,7 +229,7 @@ describe("verification cli", () => {
     );
 
     writeFileSync(
-      join(ralphDir, "ralph-history.json"),
+      join(ralphDir, "history.json"),
       JSON.stringify(
         {
           iterations: [
