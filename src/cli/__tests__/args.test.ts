@@ -192,4 +192,51 @@ describe("CLI argument parsing", () => {
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
+
+  test("accepts --tasks without prompt when tasks.md exists", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "ralph-tasks-no-prompt-"));
+    try {
+      // Create .ralph directory and tasks.md
+      mkdirSync(join(projectDir, ".ralph"), { recursive: true });
+      writeFileSync(
+        join(projectDir, ".ralph", "tasks.md"),
+        `# Ralph Tasks\n\n- [ ] First task\n`,
+      );
+
+      const res = runRalphSync(["--tasks", "--dry-run"], { cwd: projectDir });
+
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout).toContain("=== PROMPT THAT WOULD BE SENT ===");
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects --tasks without prompt when tasks.md missing", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "ralph-tasks-missing-"));
+    try {
+      // No tasks.md created
+      const res = runRalphSync(["--tasks", "--dry-run"], { cwd: projectDir });
+
+      expect(res.exitCode).toBe(1);
+      expect(res.stderr).toContain("Tasks mode requires a prompt OR an existing .ralph/tasks.md file");
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts --tasks with prompt even without tasks.md", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "ralph-tasks-with-prompt-"));
+    try {
+      // No tasks.md created - it will be auto-created by ensureTasksFile
+      const res = runRalphSync(["--tasks", "-p", "Some instructions", "--dry-run"], {
+        cwd: projectDir,
+      });
+
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout).toContain("=== PROMPT THAT WOULD BE SENT ===");
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
 });

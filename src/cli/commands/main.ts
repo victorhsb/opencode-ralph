@@ -23,6 +23,7 @@ import {
 import { getUserFriendlyMessage } from "../../errors/messages";
 import { loadRalphConfig, type Config } from "../../config/loader";
 import { configureLogger, logger as console, type LogLevel } from "../../logger";
+import { getTasksFilePath } from "../../config/config";
 
 /**
  * Parsed and validated CLI options
@@ -101,11 +102,23 @@ export async function mainCommandAction(this: Command): Promise<void> {
 
     validateResolvedOptions(resolvedOpts);
 
-    // Validate that either -p or -f is provided
-    if (!resolvedOpts.prompt && !resolvedOpts.file && promptParts.length === 0) {
+    // Validate that either -p or -f is provided (unless in tasks mode)
+    const hasPrompt = resolvedOpts.prompt || resolvedOpts.file || promptParts.length > 0;
+    
+    if (!hasPrompt && !resolvedOpts.tasks) {
       throw new ValidationError(
         "No prompt provided. Usage: ralph \"Your task\" [options], ralph -p \"Your task\" [options], or ralph -f <prompt-file>."
       );
+    }
+
+    // In tasks mode without a prompt, verify tasks.md exists
+    if (!hasPrompt && resolvedOpts.tasks) {
+      const tasksPath = getTasksFilePath();
+      if (!existsSync(tasksPath)) {
+        throw new ValidationError(
+          "Tasks mode requires a prompt OR an existing .ralph/tasks.md file. Create tasks first with 'ralph task add \"description\"' or provide a prompt."
+        );
+      }
     }
 
     // Parse prompt from various sources
@@ -124,7 +137,8 @@ export async function mainCommandAction(this: Command): Promise<void> {
       prompt = promptParts.join(" ");
     }
 
-    if (!prompt.trim()) {
+    // Only require non-empty prompt if not in tasks mode
+    if (!prompt.trim() && !resolvedOpts.tasks) {
       throw new ValidationError("No prompt provided or prompt file is empty.");
     }
 

@@ -53,7 +53,7 @@ describe("buildPrompt", () => {
     const state = createBaseState();
     const prompt = buildPrompt(state);
 
-    expect(prompt).toContain("Ralph Wiggum Loop - Iteration 1");
+    expect(prompt).toContain("Current Iteration: 1");
     expect(prompt).toContain("Test prompt");
     expect(prompt).toContain("COMPLETE");
     expect(prompt).toContain("an iterative development loop");
@@ -64,7 +64,7 @@ describe("buildPrompt", () => {
     const state = createBaseState({ tasksMode: true });
     const prompt = buildPrompt(state);
 
-    expect(prompt).toContain("Ralph Wiggum Loop - Iteration 1");
+    expect(prompt).toContain("Current Iteration: 1");
     expect(prompt).toContain("Tasks Mode: ENABLED");
     expect(prompt).toContain("TASK_COMPLETE");
     expect(prompt).toContain("Work on ONE task at a time");
@@ -74,7 +74,7 @@ describe("buildPrompt", () => {
     const state = createBaseState({ iteration: 5 });
     const prompt = buildPrompt(state);
 
-    expect(prompt).toContain("Iteration 5");
+    expect(prompt).toContain("Current Iteration: 5");
   });
 
   test("shows max iterations when set", () => {
@@ -177,6 +177,30 @@ describe("buildPrompt", () => {
 
     const prompt = buildPrompt(state);
     expect(prompt).not.toContain("Previous Verification Failure");
+  });
+
+  test("omits additional instructions section when prompt is empty in tasks mode", () => {
+    const state = createBaseState({
+      tasksMode: true,
+      prompt: "",
+    });
+    const prompt = buildPrompt(state);
+
+    expect(prompt).not.toContain("Additional Instructions");
+    expect(prompt).toContain("Tasks Mode: ENABLED");
+    expect(prompt).toContain("Work on ONE task at a time");
+  });
+
+  test("includes additional instructions when prompt provided in tasks mode", () => {
+    const state = createBaseState({
+      tasksMode: true,
+      prompt: "Some extra guidance",
+    });
+    const prompt = buildPrompt(state);
+
+    expect(prompt).toContain("Additional Instructions");
+    expect(prompt).toContain("Some extra guidance");
+    expect(prompt).not.toContain("Your Main Goal");
   });
 });
 

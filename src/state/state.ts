@@ -238,7 +238,7 @@ const RalphStateSchema = z.object({
   /** Minimum iterations required before the loop can complete */
   minIterations: z.number().int().nonnegative(),
   /** Maximum iterations allowed before the loop is forced to stop */
-  maxIterations: z.number().int().positive(),
+  maxIterations: z.number().int().nonnegative(),
   /** The text/promise that signals successful completion */
   completionPromise: z.string(),
   /** Optional text/promise that signals the loop should abort */

@@ -233,7 +233,9 @@ function buildTasksModePrompt(state: RalphState): string {
     builder.addText(tasksSection);
   }
 
-  builder.addText(state.prompt, "Your Main Goal");
+  if (state.prompt.trim()) {
+    builder.addText(state.prompt, "Additional Instructions");
+  }
 
   const verificationRules = getVerificationRulesSection(state);
   if (verificationRules) {
@@ -263,9 +265,8 @@ function buildTasksModePrompt(state: RalphState): string {
 function buildRegularPrompt(state: RalphState): string {
   const builder = new PromptBuilder();
 
-  // builder.addText(buildHeader(state));
-  // builder.addText(buildIterationInfoContent(state), "Current Iteration");
   builder.addText(buildRegularModeIntro());
+  builder.addText(buildIterationInfoContent(state), "Current Iteration");
 
   const context = buildContextContent();
   if (context) {
