@@ -1,6 +1,6 @@
 ---
 name: ralph-cli-manager
-description: "Expert guidance for MANAGING Ralph CLI (NEVER running it). Use when the user needs to (1) Initialize or set up Ralph in a project, (2) Manage tasks with Ralph (add, remove, list, track progress) via task commands, (3) Write effective Ralph prompts for the USER to run, (4) Monitor or control active Ralph loops via status/context commands, (5) Edit task files directly, or (6) Understand Ralph best practices. CRITICAL: You must NEVER execute ralph with a quoted prompt argument yourself - only provide such commands to the user. You CAN safely run ralph init, ralph task commands, ralph --status, ralph --add-context, and edit .ralph/ files. Covers task management, prompt writing, loop monitoring, and best practices for autonomous AI development loops."
+description: "Expert guidance for MANAGING Ralph CLI (NEVER running it). Use when the user needs to initialize or set up Ralph in a project, manage tasks via task commands, write effective Ralph prompts for the USER to run, monitor or control active Ralph loops via status/context commands, edit task files directly, or understand Ralph best practices. CRITICAL: You must NEVER execute ralph with a quoted prompt argument yourself - only provide such commands to the user. You CAN safely run ralph init, ralph task commands, ralph --status, ralph --add-context, and edit .ralph/ files."
 ---
 
 # Ralph CLI Manager
@@ -37,144 +37,24 @@ If a user asks you to "run ralph" or "start a ralph loop", provide them with:
 2. A well-crafted prompt they can use
 3. Instructions on how to monitor it
 
-## When to Use Ralph vs Synchronous Agent
+## When to Use Ralph
 
-Understanding when Ralph is appropriate is critical. Ralph is NOT always the right tool.
+See [references/when-to-use-ralph.md](references/when-to-use-ralph.md) for complete decision guidance.
 
-### What Ralph Is
+**Quick heuristics:**
 
-Ralph is an **autonomous loop orchestrator** that:
-- Runs the same prompt repeatedly until completion
-- Self-corrects by seeing its own previous work
-- Works "AFK" (away from keyboard) on well-defined tasks
-- Performs ONE task per loop iteration
-- Is monolithic (single process, single repository)
-
-Think of it as: "Throw clay on the pottery wheel, spin it, check result, repeat until right."
-
-### ✅ Use Ralph When
-
-| Scenario | Why Ralph Works |
-|----------|-----------------|
-| **Self-verifying tasks** | Tests, linters, type checks provide automatic feedback |
-| **Well-defined requirements** | Clear success criteria → `<promise>COMPLETE</promise>` |
-| **Greenfield projects** | Set up, walk away, return to finished code |
-| **Getting tests to pass** | Each iteration sees failures, fixes them |
-| **Iterative refinement** | "Make it work, make it right, make it fast" |
-| **Bulk work AFK** | Complex multi-step tasks you want done while away |
-| **Tasks with automatic verification** | Build passes, tests pass, linting passes |
-| **CRUD/boilerplate generation** | Repetitive work with clear patterns |
-
-**Example good Ralph task:**
-```
-"Build a REST API for todos with CRUD endpoints.
-Run tests after each change.
-Output <promise>COMPLETE</promise> when all tests pass."
-```
-✅ Clear goal, automatic verification (tests), defined completion.
-
-### ❌ DO NOT Use Ralph When
-
-| Scenario | Why Ralph Fails | Use Instead |
-|----------|-----------------|-------------|
-| **Simple questions** | Overkill, wastes tokens | Single prompt |
-| **Exploratory work** | No clear "done" state | Interactive session |
-| **Human judgment needed** | Can't make subjective decisions | You decide |
-| **Quick fixes** | Overhead > benefit | Direct edit |
-| **No completion criteria** | Loops forever | Define criteria first |
-| **Need immediate feedback** | Ralph is AFK work | Synchronous chat |
-| **Debugging/understanding** | Needs interactive exploration | Read, discuss |
-| **Real-time interaction** | Ralph is autonomous | Live session |
-| **Vague requirements** | Can't verify completion | Clarify first |
-| **One-shot operations** | No iteration needed | Single command |
-
-**Example bad Ralph task:**
-```
-"Improve the code quality"
-```
-❌ No verification, subjective, no completion criteria. Will loop forever.
-
-**Better approach:**
-Use a synchronous agent to discuss what "quality" means, identify specific issues, then use Ralph for each fix:
-```
-"Refactor auth.ts to extract validation into separate functions.
-Ensure all existing tests still pass.
-Output <promise>COMPLETE</promise> when done."
-```
-
-### Decision Flowchart
-
-```
-User wants to build something
-         │
-         ▼
-  Is there clear        ───No───▶ Don't use Ralph yet.
-  completion criteria?            Clarify requirements first.
-         │
-        Yes
-         │
-         ▼
-  Can completion be      ───No───▶ Don't use Ralph.
-  automatically verified?          Needs human judgment.
-         │
-        Yes
-         │
-         ▼
-  Is it a single        ───Yes──▶ Use synchronous agent.
-  quick operation?                Ralph overhead not worth it.
-         │
-         No
-         │
-         ▼
-  Does it benefit       ───No───▶ Use synchronous agent.
-  from iteration?                  One-shot is fine.
-         │
-        Yes
-         │
-         ▼
-         └────────────────▶ ✅ Use Ralph
-                           Set max-iterations as safety net
-```
-
-### Quick Heuristics
-
-**Use Ralph if you can answer YES to ALL:**
+Use Ralph if you can answer YES to ALL:
 1. Is there a specific, measurable goal?
 2. Can the AI verify completion itself (tests, lint, etc.)?
 3. Would multiple attempts help (iteration = better)?
 4. Can you walk away and check back later?
 
-**Use synchronous agent if ANY apply:**
+Use synchronous agent if ANY apply:
 1. You need to explore/discuss options
 2. Success is subjective or requires your input
 3. One good attempt is enough
 4. You want immediate back-and-forth
 5. The task is simple or small
-
-### Real-World Examples
-
-**Good for Ralph:**
-- "Create 20 API endpoints following the pattern in handlers/user.go"
-- "Fix all TypeScript errors in the codebase"
-- "Migrate all tests from Jest to Vitest"
-- "Add input validation to all form fields"
-- "Implement all routes defined in openapi.yaml"
-
-**Good for Synchronous Agent:**
-- "Help me understand this legacy codebase"
-- "What's the best architecture for my use case?"
-- "Review this code and suggest improvements"
-- "Debug why this function returns null sometimes"
-- "Explain the difference between these two approaches"
-
-### When in Doubt
-
-Start synchronous. If you find yourself:
-- Repeating the same corrections
-- The task has clear sub-tasks
-- You could walk away if it just worked
-
-Then switch to Ralph with proper task setup.
 
 ## Quick Start
 
@@ -230,7 +110,7 @@ Shows:
 ralph task remove 3     # Remove task at index 3
 ```
 
-### 5. Run with Tasks Mode (User only; that's just a reference)
+### 5. Run with Tasks Mode (User only)
 
 **⚠️ DO NOT RUN THIS YOURSELF - Provide to user**
 
@@ -282,23 +162,6 @@ When all requirements are met and verified, output:
 <promise>COMPLETE</promise>
 ```
 
-### Examples
-
-**Bad:**
-```
-Build a todo API
-```
-
-**Good:**
-```
-Build a REST API for todos with:
-- CRUD endpoints (GET, POST, PUT, DELETE)
-- Input validation
-- Tests for each endpoint
-
-Run tests after changes. Output <promise>COMPLETE</promise> when all tests pass.
-```
-
 ### Task-Specific Prompts (PROVIDE TO USER)
 
 **⚠️ DO NOT EXECUTE - Craft and provide to user**
@@ -322,45 +185,6 @@ Test the endpoints manually. Output <promise>READY_FOR_NEXT_TASK</promise> when 
 ```
 
 **Remember:** You write the prompt, the user runs the command.
-
-### How to Help Users Run Ralph
-
-When a user asks you to run ralph:
-
-1. **Ask clarifying questions** about what they want to build
-2. **Craft a detailed prompt** following the prompt writing guidelines
-3. **Check if `.ralph/` exists** - if not, suggest running `ralph init` first
-4. **Set up tasks** if needed using `ralph task add`
-5. **Write a good prompt** for them to run themselves using the `ralph -f prompt.md`; 
-
-**Example interaction:**
-
-User: "Build me an auth system"
-
-Your response:
-```
-I'll help you set up Ralph to build an auth system. First, let me initialize Ralph and add some tasks:
-
-```bash
-ralph init
-ralph task add "Create database schema for users and sessions"
-ralph task add "Implement JWT authentication middleware"
-ralph task add "Create login and register endpoints"
-ralph task add "Add password hashing with bcrypt"
-```
-
-Now run this command in your terminal:
-
-```bash
-ralph "Build a complete authentication system with JWT:
-- Create users and sessions tables
-- Implement login/register endpoints
-- Add JWT middleware for protected routes
-- Use bcrypt for password hashing
-
-Output <promise>READY_FOR_NEXT_TASK</promise> after each task is complete." \
-  --tasks --max-iterations 30
-```
 
 ## Monitoring and Control
 
@@ -447,13 +271,17 @@ Status markers:
 - Be consistent in prompts
 - Match `--completion-promise` flag if customized
 
-## Command Safety Validation
+## Command Safety
 
-This skill includes a validation script to help ensure ralph commands are safe:
+See [references/safety-guide.md](references/safety-guide.md) for detailed safety rules.
 
-**Script:** `scripts/validate-ralph-command.sh`
+**Quick validation:**
+- Does this command have a quoted string prompt? → **FORBIDDEN**
+- Is this a `ralph task *` command? → **SAFE**
+- Is this `ralph init` or `ralph --status`? → **SAFE**
+- Is this `ralph "..."` with any flags? → **FORBIDDEN**
 
-Use this script to check if a ralph command is safe to execute:
+Use the validation script to check commands:
 
 ```bash
 ./scripts/validate-ralph-command.sh 'ralph init'
@@ -463,15 +291,11 @@ Use this script to check if a ralph command is safe to execute:
 # Output: ✗ FORBIDDEN: This command would launch a ralph loop
 ```
 
-**When in doubt, ask yourself:**
-- Does this command have a quoted string prompt? → **FORBIDDEN**
-- Is this a `ralph task *` command? → **SAFE**
-- Is this `ralph init` or `ralph --status`? → **SAFE**
-- Is this `ralph "..."` with any flags? → **FORBIDDEN**
+## References
 
-## Common Commands Reference
-
-See [references/commands.md](references/commands.md) for complete command reference.
+- [references/commands.md](references/commands.md) - Complete command reference
+- [references/when-to-use-ralph.md](references/when-to-use-ralph.md) - Decision guidance
+- [references/safety-guide.md](references/safety-guide.md) - Detailed safety rules
 
 ## Summary
 

@@ -1,6 +1,6 @@
 ---
 name: ralph-loop-plan-creator
-description: "Create planning-mode artifacts for Ralph loops that implement complex features or MVPs. Use when a user asks to break work into dependency-ordered phases, generate a master plan plus phase-NN plan files, preload only phase-specific context, and sync those phases into .ralph/ralph-tasks.md using ralph-cli-manager. CRITICAL: When ANY Ralph CLI interaction is needed (init, task add/remove/list, status checks, editing task files), STOP and invoke the ralph-cli-manager skill FIRST for proper guidance on safe CLI operations."
+description: "Create planning-mode artifacts for Ralph loops implementing complex features or MVPs. Creates master plans and phase-specific plans that minimize context per iteration. Does NOT execute Ralph CLI commands - delegates all CLI operations to ralph-cli-manager skill. Use when breaking work into dependency-ordered phases with clear verification gates."
 ---
 
 # Ralph Loop Plan Creator

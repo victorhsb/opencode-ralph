@@ -2,7 +2,7 @@
 
 Use this workflow to keep phase plans and Ralph task state aligned.
 
-## ⚠️ PREREQUISITE: Load ralph-cli-manager Skill
+## ⚠️ PREREQUISITE: Load ralph-cli-manager Skill FIRST
 
 **Before executing ANY commands in this reference, invoke the ralph-cli-manager skill.**
 
@@ -12,6 +12,8 @@ This reference provides planning-specific sync patterns, but the ralph-cli-manag
 - Best practices for Ralph CLI operations
 
 **Do NOT proceed with CLI operations until you have loaded ralph-cli-manager.**
+
+**Why this matters:** The ralph-cli-manager skill has strict safety rules about which commands can be executed. Attempting to run commands without loading that skill first may result in executing forbidden commands that launch Ralph loops.
 
 ## Safety Rule
 
