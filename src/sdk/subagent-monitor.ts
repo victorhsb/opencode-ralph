@@ -5,9 +5,14 @@
  * Handles polling for new children, event subscription, and recursive monitoring.
  */
 
-import type { SubagentInfo, SubagentEvent, SubagentMonitorOptions } from "./subagent-types.js";
-import { generateShortId } from "./subagent-output.js";
+import type {
+  SubagentInfo,
+  SubagentEvent,
+  SubagentMonitorOptions,
+} from "./subagent-types.js";
+import { generateShortId } from "./subagent-identity.js";
 import type { SdkEvent } from "./executor.js";
+import { logger } from "../logger";
 
 /**
  * Poll interval in milliseconds for checking new child sessions.
@@ -40,7 +45,10 @@ const DEFAULT_AGENT_NAME = "unknown";
  */
 export class SubagentMonitor {
   private activeSubagents: Map<string, SubagentInfo>;
-  private eventSubscriptions: Map<string, { iterator: AsyncIterator<unknown>; abortController: AbortController }>;
+  private eventSubscriptions: Map<
+    string,
+    { iterator: AsyncIterator<unknown>; abortController: AbortController }
+  >;
   private options: SubagentMonitorOptions;
   private pollInterval: ReturnType<typeof setInterval> | null;
   private isRunning: boolean;
@@ -111,6 +119,7 @@ export class SubagentMonitor {
         subscription.abortController.abort();
       } catch (error) {
         // Ignore abort errors
+        logger.error("could not abort subscription", error);
       }
     }
     this.eventSubscriptions.clear();
@@ -120,6 +129,7 @@ export class SubagentMonitor {
       try {
         await childMonitor.stop();
       } catch (error) {
+        logger.error("could not stop child monitors", error);
         // Ignore child monitor stop errors
       }
     }
@@ -153,9 +163,10 @@ export class SubagentMonitor {
           continue;
         }
 
-        const sessionId = typeof (child as Record<string, unknown>)['id'] === "string"
-          ? (child as Record<string, unknown>)['id'] as string
-          : "";
+        const sessionId =
+          typeof (child as Record<string, unknown>)["id"] === "string"
+            ? ((child as Record<string, unknown>)["id"] as string)
+            : "";
 
         if (!sessionId) {
           continue;
@@ -167,16 +178,19 @@ export class SubagentMonitor {
         }
 
         // Extract parent ID and title
-        const parentId = typeof (child as Record<string, unknown>)['parentID'] === "string"
-          ? (child as Record<string, unknown>)['parentID'] as string
-          : this.options.parentSessionId;
+        const parentId =
+          typeof (child as Record<string, unknown>)["parentID"] === "string"
+            ? ((child as Record<string, unknown>)["parentID"] as string)
+            : this.options.parentSessionId;
 
-        const title = typeof (child as Record<string, unknown>)['title'] === "string"
-          ? (child as Record<string, unknown>)['title'] as string
-          : "";
+        const title =
+          typeof (child as Record<string, unknown>)["title"] === "string"
+            ? ((child as Record<string, unknown>)["title"] as string)
+            : "";
 
         // Try to extract agent name from title or use default
-        const agentName = this.extractAgentNameFromTitle(title) || DEFAULT_AGENT_NAME;
+        const agentName =
+          this.extractAgentNameFromTitle(title) || DEFAULT_AGENT_NAME;
 
         // Create subagent info
         const subagentInfo: SubagentInfo = {
@@ -201,6 +215,7 @@ export class SubagentMonitor {
       }
     } catch (error) {
       // Silently ignore polling errors - we'll retry on next poll
+      logger.error("could not poll for children", error);
     }
   }
 
@@ -249,7 +264,10 @@ export class SubagentMonitor {
    * @param sessionId - Session ID to subscribe to
    * @param info - Subagent information for this session
    */
-  private async subscribeToSession(sessionId: string, info: SubagentInfo): Promise<void> {
+  private async subscribeToSession(
+    sessionId: string,
+    info: SubagentInfo,
+  ): Promise<void> {
     try {
       const abortController = new AbortController();
 
@@ -266,15 +284,20 @@ export class SubagentMonitor {
         try {
           for await (const event of eventSubscription.stream) {
             // Check if we should stop
-            if (!this.isRunning || abortController.signal.aborted || this.options.signal?.aborted) {
+            if (
+              !this.isRunning ||
+              abortController.signal.aborted ||
+              this.options.signal?.aborted
+            ) {
               break;
             }
 
             // Check if this event is for our session
             const eventObj = event as Record<string, unknown>;
-            const eventSessionId = typeof eventObj['sessionID'] === "string"
-              ? eventObj['sessionID']
-              : "";
+            const eventSessionId =
+              typeof eventObj["sessionID"] === "string"
+                ? eventObj["sessionID"]
+                : "";
 
             // Skip events for other sessions
             if (eventSessionId && eventSessionId !== sessionId) {
@@ -285,10 +308,12 @@ export class SubagentMonitor {
             this.handleEvent(info, event);
 
             // Check for session completion
-            const eventType = typeof eventObj['type'] === "string" ? eventObj['type'] : "";
+            const eventType =
+              typeof eventObj["type"] === "string" ? eventObj["type"] : "";
             if (eventType === "session.idle" || eventType === "session.error") {
               // Update status based on event type
-              const finalStatus: SubagentInfo["status"] = eventType === "session.error" ? "error" : "completed";
+              const finalStatus: SubagentInfo["status"] =
+                eventType === "session.error" ? "error" : "completed";
               info.status = finalStatus;
 
               // Notify completion
@@ -303,12 +328,14 @@ export class SubagentMonitor {
         } catch (error) {
           // Mark as error and notify
           info.status = "error";
+          logger.error(error);
           this.options.onSubagentCompleted(info);
         }
       })();
     } catch (error) {
       // Mark as error and continue
       info.status = "error";
+      logger.error(error);
       this.options.onSubagentCompleted(info);
     }
   }
@@ -374,6 +401,7 @@ export class SubagentMonitor {
       await childMonitor.start();
     } catch (error) {
       // Silently handle child monitor spawn failures
+      logger.error("could not spawn child monitor", error);
     }
   }
 
@@ -394,13 +422,14 @@ export class SubagentMonitor {
     }
 
     const eventObj = event as Record<string, unknown>;
-    const eventType = typeof eventObj['type'] === "string" ? eventObj['type'] : "";
-    const props = (eventObj['properties'] || {}) as Record<string, unknown>;
+    const eventType =
+      typeof eventObj["type"] === "string" ? eventObj["type"] : "";
+    const props = (eventObj["properties"] || {}) as Record<string, unknown>;
 
     // Handle message.part.delta - streaming text chunks
     if (eventType === "message.part.delta") {
-      const delta = typeof props['delta'] === "string" ? props['delta'] : "";
-      const field = typeof props['field'] === "string" ? props['field'] : "";
+      const delta = typeof props["delta"] === "string" ? props["delta"] : "";
+      const field = typeof props["field"] === "string" ? props["field"] : "";
 
       if (field === "text" && delta) {
         return {
@@ -415,20 +444,28 @@ export class SubagentMonitor {
 
     // Handle message.part.updated - complete parts
     if (eventType === "message.part.updated") {
-      const part = (props['part'] || {}) as Record<string, unknown>;
-      const partType = typeof part['type'] === "string" ? part['type'] : "";
+      const part = (props["part"] || {}) as Record<string, unknown>;
+      const partType = typeof part["type"] === "string" ? part["type"] : "";
 
       // Handle tool parts
       if (partType === "tool") {
-        const toolName = typeof part['tool'] === "string" ? part['tool'] : "unknown";
-        const state = (part['state'] || {}) as Record<string, unknown>;
-        const status = typeof state['status'] === "string" ? state['status'] : "";
+        const toolName =
+          typeof part["tool"] === "string" ? part["tool"] : "unknown";
+        const state = (part["state"] || {}) as Record<string, unknown>;
+        const status =
+          typeof state["status"] === "string" ? state["status"] : "";
 
         // Handle Task tool invocations
         if (toolName === "task") {
-          const input = (state['input'] ?? part['input']) as Record<string, unknown> | undefined;
-          const agentName = typeof input?.['agent'] === "string" ? input['agent'] : undefined;
-          const description = typeof input?.['description'] === "string" ? input['description'] : undefined;
+          const input = (state["input"] ?? part["input"]) as
+            | Record<string, unknown>
+            | undefined;
+          const agentName =
+            typeof input?.["agent"] === "string" ? input["agent"] : undefined;
+          const description =
+            typeof input?.["description"] === "string"
+              ? input["description"]
+              : undefined;
 
           if (status === "running" || status === "completed") {
             const taskSpawn: SdkEvent["taskSpawn"] = {};
@@ -459,14 +496,18 @@ export class SubagentMonitor {
         // Tool completed
         if (status === "completed") {
           const toolResult: SdkEvent["result"] = {};
-          if (state['input'] !== undefined && typeof state['input'] === "object" && state['input'] !== null) {
-            toolResult.input = state['input'] as Record<string, unknown>;
+          if (
+            state["input"] !== undefined &&
+            typeof state["input"] === "object" &&
+            state["input"] !== null
+          ) {
+            toolResult.input = state["input"] as Record<string, unknown>;
           }
-          if (typeof state['output'] === "string") {
-            toolResult.output = state['output'];
+          if (typeof state["output"] === "string") {
+            toolResult.output = state["output"];
           }
-          if (typeof state['title'] === "string") {
-            toolResult.title = state['title'];
+          if (typeof state["title"] === "string") {
+            toolResult.title = state["title"];
           }
           return {
             type: "tool_end",
@@ -479,8 +520,8 @@ export class SubagentMonitor {
 
       // Handle text parts from assistant
       if (partType === "text") {
-        const text = typeof part['text'] === "string" ? part['text'] : "";
-        const role = typeof part['role'] === "string" ? part['role'] : "";
+        const text = typeof part["text"] === "string" ? part["text"] : "";
+        const role = typeof part["role"] === "string" ? part["role"] : "";
         if (text && role === "assistant") {
           return {
             type: "text",
@@ -492,7 +533,7 @@ export class SubagentMonitor {
 
       // Handle reasoning/thinking
       if (partType === "reasoning" || partType === "thinking") {
-        const text = typeof part['text'] === "string" ? part['text'] : "";
+        const text = typeof part["text"] === "string" ? part["text"] : "";
         if (text) {
           return {
             type: "thinking",
@@ -505,18 +546,21 @@ export class SubagentMonitor {
 
     // Handle session errors
     if (eventType === "session.error") {
-      const error = (props['error'] || {}) as Record<string, unknown>;
+      const error = (props["error"] || {}) as Record<string, unknown>;
       let errorMessage = "Unknown error";
 
-      if (typeof error['data'] === "object" && error['data'] !== null) {
-        const errorData = error['data'] as Record<string, unknown>;
-        if (typeof errorData['message'] === "string") {
-          errorMessage = errorData['message'];
+      if (typeof error["data"] === "object" && error["data"] !== null) {
+        const errorData = error["data"] as Record<string, unknown>;
+        if (typeof errorData["message"] === "string") {
+          errorMessage = errorData["message"];
         }
       }
 
-      if (errorMessage === "Unknown error" && typeof error['message'] === "string") {
-        errorMessage = error['message'];
+      if (
+        errorMessage === "Unknown error" &&
+        typeof error["message"] === "string"
+      ) {
+        errorMessage = error["message"];
       }
 
       return {

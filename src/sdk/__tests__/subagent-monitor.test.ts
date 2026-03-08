@@ -11,8 +11,8 @@
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import type { SubagentInfo, SubagentEvent, SubagentMonitorOptions } from "../subagent-types.js";
+import { generateShortId } from "../subagent-identity.js";
 import {
-  generateShortId,
   formatSubagentOutput,
   formatSubagentStart,
   formatSubagentEnd,

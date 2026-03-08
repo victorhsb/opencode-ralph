@@ -7,24 +7,7 @@
  */
 
 import type { SubagentInfo } from "./subagent-types.js";
-
-/**
- * ANSI escape codes for text formatting.
- */
-const GRAY = "\x1b[90m";
-const RESET = "\x1b[0m";
-
-/**
- * Generate indentation string based on subagent depth.
- *
- * Each depth level adds 2 spaces of indentation.
- *
- * @param depth - Nesting depth (1 = direct child, 2+ = nested)
- * @returns Indentation string with appropriate spaces
- */
-function getIndent(depth: number): string {
-  return " ".repeat(depth * 2);
-}
+import { GRAY, RESET, getIndent, getSubagentPrefix } from "./subagent-format.js";
 
 /**
  * Formatter for streaming subagent output chunks.
@@ -41,13 +24,11 @@ function getIndent(depth: number): string {
  * formatter.formatChunk(" line")      // " line"
  */
 export class SubagentStreamingFormatter {
-  /** Subagent information for prefix generation */
-  private readonly info: SubagentInfo;
-  /** Indentation string based on depth */
-  private readonly indent: string;
-  /** Prefix string with agent name and short ID */
-  private readonly prefix: string;
-  /** Tracks whether we're at the start of a line */
+  /** Full prefix line including gray color, indent, and prefix text */
+  private readonly prefixLine: string;
+  /** Empty line marker for line breaks without content */
+  private readonly emptyLine: string;
+  /** Tracks whether the next output should be prefixed (at line start) */
   private isAtLineStart: boolean;
 
   /**
@@ -56,9 +37,10 @@ export class SubagentStreamingFormatter {
    * @param info - Subagent information containing agent name, short ID, and depth
    */
   constructor(info: SubagentInfo) {
-    this.info = info;
-    this.indent = getIndent(info.depth);
-    this.prefix = `subagent ${info.agentName}@${info.shortId}: `;
+    const indent = getIndent(info.depth);
+    const prefix = getSubagentPrefix(info);
+    this.prefixLine = `${GRAY}${indent}${prefix}`;
+    this.emptyLine = `${GRAY}${indent}${RESET}`;
     this.isAtLineStart = true;
   }
 
@@ -78,7 +60,6 @@ export class SubagentStreamingFormatter {
       return "";
     }
 
-    // Split the chunk by newlines to handle line boundaries
     const lines = chunk.split("\n");
     const formattedLines: string[] = [];
 
@@ -86,28 +67,74 @@ export class SubagentStreamingFormatter {
       const line = lines[i]!;
       const isLastLine = i === lines.length - 1;
 
-      if (this.isAtLineStart && line.length > 0) {
-        // At line start with content: add prefix
-        formattedLines.push(`${GRAY}${this.indent}${this.prefix}${line}${RESET}`);
-        this.isAtLineStart = false;
-      } else if (!this.isAtLineStart) {
-        // Not at line start: just add the content (already has color from prefix)
-        formattedLines.push(line);
-      } else {
-        // At line start but empty line (consecutive newlines)
-        formattedLines.push(`${GRAY}${this.indent}${RESET}`);
-      }
-
-      // If not the last line, we hit a newline
-      if (!isLastLine) {
-        // Add the newline separator back
-        formattedLines.push("\n");
-        // Next line starts fresh
-        this.isAtLineStart = true;
-      }
+      this.formatLine(line, isLastLine, formattedLines);
     }
 
     return formattedLines.join("");
+  }
+
+  /**
+   * Format a single line and append to the output buffer.
+   *
+   * Handles the three line states:
+   * - Line start with content: prefix + content
+   * - Mid-line: just content
+   * - Line start with empty line: empty line marker
+   *
+   * @param line - The raw line content
+   * @param isLastLine - Whether this is the final line in the chunk
+   * @param output - Array to append formatted output to
+   */
+  private formatLine(line: string, isLastLine: boolean, output: string[]): void {
+    if (this.isAtLineStart) {
+      this.formatLineStart(line, output);
+    } else {
+      this.formatMidLine(line, output);
+    }
+
+    if (!isLastLine) {
+      this.formatLineBreak(output);
+    }
+  }
+
+  /**
+   * Format a line when at the start of a new line.
+   *
+   * @param line - The raw line content
+   * @param output - Array to append formatted output to
+   */
+  private formatLineStart(line: string, output: string[]): void {
+    if (line.length > 0) {
+      // At line start with content: add prefix + content + reset
+      output.push(`${this.prefixLine}${line}${RESET}`);
+      this.isAtLineStart = false;
+    } else {
+      // At line start but empty line (consecutive newlines)
+      output.push(this.emptyLine);
+    }
+  }
+
+  /**
+   * Format a line when continuing mid-line.
+   *
+   * @param line - The raw line content
+   * @param output - Array to append formatted output to
+   */
+  private formatMidLine(line: string, output: string[]): void {
+    // Not at line start: just add the content (color already active from prefix)
+    output.push(line);
+  }
+
+  /**
+   * Format a line break transition.
+   *
+   * Adds newline separator and marks next line as line start.
+   *
+   * @param output - Array to append formatted output to
+   */
+  private formatLineBreak(output: string[]): void {
+    output.push("\n");
+    this.isAtLineStart = true;
   }
 
   /**
@@ -121,7 +148,6 @@ export class SubagentStreamingFormatter {
   flush(): string {
     // Current implementation maintains state per chunk,
     // so there's no buffered content to flush.
-    // Future implementations might buffer partial words.
     return "";
   }
 

@@ -7,6 +7,7 @@
 
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { ValidationError } from "../errors";
+import { logger } from "../logger";
 
 export interface StructuredOutput {
   /** Whether the task is complete */
@@ -69,7 +70,13 @@ export interface StructuredOutputSchema {
 
 export interface SdkEvent {
   /** Event type */
-  type: "text" | "tool_start" | "tool_end" | "thinking" | "error" | "task_spawn";
+  type:
+    | "text"
+    | "tool_start"
+    | "tool_end"
+    | "thinking"
+    | "error"
+    | "task_spawn";
   /** Event content (if applicable) */
   content?: string;
   /** Tool name (for tool events) */
@@ -97,12 +104,18 @@ const DEFAULT_STRUCTURED_OUTPUT_SCHEMA: StructuredOutputSchema = {
   schema: {
     type: "object",
     properties: {
-      completed: { type: "boolean", description: "Whether the task is complete" },
-      reasoning: { type: "string", description: "Brief explanation of completion status" },
-      output: { type: "string", description: "The actual output text" }
+      completed: {
+        type: "boolean",
+        description: "Whether the task is complete",
+      },
+      reasoning: {
+        type: "string",
+        description: "Brief explanation of completion status",
+      },
+      output: { type: "string", description: "The actual output text" },
     },
-    required: ["completed"]
-  }
+    required: ["completed"],
+  },
 };
 
 /**
@@ -118,18 +131,21 @@ const DEFAULT_STRUCTURED_OUTPUT_SCHEMA: StructuredOutputSchema = {
  * Each call creates a new session (no persistence across calls).
  */
 export async function executePrompt(
-  client: OpencodeClient,    // opencode sdk client
-  prompt: string,            // prompt text to send
+  client: OpencodeClient, // opencode sdk client
+  prompt: string, // prompt text to send
   model: string | undefined, // model to use
   agent: string | undefined, // agent to use
-  options: ExecutionOptions
+  options: ExecutionOptions,
 ): Promise<ExecutionResult> {
   const { onEvent, signal, format, sessionId: existingSessionId } = options;
 
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
   let output = "";
-  let eventSubscription: { stream: AsyncIterable<unknown>; unsubscribe?: () => void } | null = null;
+  let eventSubscription: {
+    stream: AsyncIterable<unknown>;
+    unsubscribe?: () => void;
+  } | null = null;
   let sessionId: string | undefined;
 
   try {
@@ -142,7 +158,9 @@ export async function executePrompt(
       });
 
       if (sessionResponse.error || !sessionResponse.data) {
-        errors.push(`Failed to create session: ${sessionResponse.error ?? 'Unknown error'}`);
+        errors.push(
+          `Failed to create session: ${sessionResponse.error ?? "Unknown error"}`,
+        );
         return {
           output,
           toolCounts,
@@ -159,7 +177,7 @@ export async function executePrompt(
     eventSubscription = await client.event.subscribe();
 
     // Small delay to ensure event subscription is active before sending prompt
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Process events in background
     let sessionComplete = false;
@@ -174,7 +192,10 @@ export async function executePrompt(
 
           // Check for session completion events
           const rawEventType = (event as any)?.type;
-          if (rawEventType === "session.idle" || rawEventType === "session.error") {
+          if (
+            rawEventType === "session.idle" ||
+            rawEventType === "session.error"
+          ) {
             sessionComplete = true;
           }
 
@@ -189,7 +210,7 @@ export async function executePrompt(
           if (sdkEvent.type === "tool_start" && sdkEvent.toolName) {
             toolCounts.set(
               sdkEvent.toolName,
-              (toolCounts.get(sdkEvent.toolName) ?? 0) + 1
+              (toolCounts.get(sdkEvent.toolName) ?? 0) + 1,
             );
           }
 
@@ -208,7 +229,9 @@ export async function executePrompt(
 
           // Check for event timeout
           if (Date.now() - lastEventTime > eventTimeoutMs) {
-            errors.push(`Event stream timeout: no events received for ${eventTimeoutMs}ms`);
+            errors.push(
+              `Event stream timeout: no events received for ${eventTimeoutMs}ms`,
+            );
             break;
           }
         }
@@ -219,18 +242,22 @@ export async function executePrompt(
     })();
 
     // Send prompt
-    let modelConfig: { providerID: string, modelID: string } | undefined = undefined;
+    let modelConfig: { providerID: string; modelID: string } | undefined =
+      undefined;
     if (model) {
       const parts = model.split("/");
       if (parts.length < 2) {
-        throw new ValidationError("Invalid model format; expected <provider>/<model>.");
+        throw new ValidationError(
+          "Invalid model format; expected <provider>/<model>.",
+        );
       }
-      const provider = parts[0]!
-      const modelID = parts.slice(1).join("/")
+      const provider = parts[0]!;
+      const modelID = parts.slice(1).join("/");
       modelConfig = {
         providerID: provider,
         modelID: modelID,
-      }
+      };
+      logger.info("parsed model", model, modelConfig);
     }
 
     const promptOptions: {
@@ -332,7 +359,9 @@ function logEventDebug(eventType: string, content: string): void {
   if (process.env["RALPH_DEBUG_EVENTS"] !== "1") return;
   const timestamp = new Date().toISOString();
   const size = Buffer.byteLength(content, "utf8");
-  process.stderr.write(`[DEBUG] [${timestamp}] Event: ${eventType} | Size: ${size} bytes\n`);
+  process.stderr.write(
+    `[DEBUG] [${timestamp}] Event: ${eventType} | Size: ${size} bytes\n`,
+  );
 }
 
 /**
@@ -356,13 +385,14 @@ function parseSdkEvent(event: unknown): SdkEvent {
   }
 
   const eventObj = event as Record<string, unknown>;
-  const eventType = typeof eventObj['type'] === "string" ? eventObj['type'] : "";
-  const props = (eventObj['properties'] || {}) as Record<string, unknown>;
+  const eventType =
+    typeof eventObj["type"] === "string" ? eventObj["type"] : "";
+  const props = (eventObj["properties"] || {}) as Record<string, unknown>;
 
   // Handle message.part.delta - streaming text chunks
   if (eventType === "message.part.delta") {
-    const delta = typeof props['delta'] === "string" ? props['delta'] : "";
-    const field = typeof props['field'] === "string" ? props['field'] : "";
+    const delta = typeof props["delta"] === "string" ? props["delta"] : "";
+    const field = typeof props["field"] === "string" ? props["field"] : "";
 
     // Only process text deltas, not other field types
     if (field === "text" && delta) {
@@ -382,22 +412,29 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
   // Handle message.part.updated - complete parts
   if (eventType === "message.part.updated") {
-    const part = (props['part'] || {}) as Record<string, unknown>;
-    const partType = typeof part['type'] === "string" ? part['type'] : "";
+    const part = (props["part"] || {}) as Record<string, unknown>;
+    const partType = typeof part["type"] === "string" ? part["type"] : "";
 
     // Handle tool parts
     if (partType === "tool") {
-      const toolName = typeof part['tool'] === "string" ? part['tool'] : "unknown";
-      const state = (part['state'] || {}) as Record<string, unknown>;
-      const status = typeof state['status'] === "string" ? state['status'] : "";
+      const toolName =
+        typeof part["tool"] === "string" ? part["tool"] : "unknown";
+      const state = (part["state"] || {}) as Record<string, unknown>;
+      const status = typeof state["status"] === "string" ? state["status"] : "";
 
       // Handle Task tool invocations
       if (toolName === "task") {
         // Extract input from either part.state.input or part.input
-        const input = (state['input'] ?? part['input']) as Record<string, unknown> | undefined;
+        const input = (state["input"] ?? part["input"]) as
+          | Record<string, unknown>
+          | undefined;
 
-        const agentName = typeof input?.['agent'] === "string" ? input['agent'] : undefined;
-        const description = typeof input?.['description'] === "string" ? input['description'] : undefined;
+        const agentName =
+          typeof input?.["agent"] === "string" ? input["agent"] : undefined;
+        const description =
+          typeof input?.["description"] === "string"
+            ? input["description"]
+            : undefined;
 
         // Return task_spawn event for both running and completed states
         if (status === "running" || status === "completed") {
@@ -429,14 +466,18 @@ function parseSdkEvent(event: unknown): SdkEvent {
       // Tool completed
       if (status === "completed") {
         const toolResult: SdkEvent["result"] = {};
-        if (state['input'] !== undefined && typeof state['input'] === "object" && state['input'] !== null) {
-          toolResult.input = state['input'] as Record<string, unknown>;
+        if (
+          state["input"] !== undefined &&
+          typeof state["input"] === "object" &&
+          state["input"] !== null
+        ) {
+          toolResult.input = state["input"] as Record<string, unknown>;
         }
-        if (typeof state['output'] === "string") {
-          toolResult.output = state['output'];
+        if (typeof state["output"] === "string") {
+          toolResult.output = state["output"];
         }
-        if (typeof state['title'] === "string") {
-          toolResult.title = state['title'];
+        if (typeof state["title"] === "string") {
+          toolResult.title = state["title"];
         }
         return {
           type: "tool_end",
@@ -449,8 +490,8 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
     // Handle text parts from assistant
     if (partType === "text") {
-      const text = typeof part['text'] === "string" ? part['text'] : "";
-      const role = typeof part['role'] === "string" ? part['role'] : "";
+      const text = typeof part["text"] === "string" ? part["text"] : "";
+      const role = typeof part["role"] === "string" ? part["role"] : "";
       // Only include if it's from assistant and has content
       if (text && role === "assistant") {
         return {
@@ -463,7 +504,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
     // Handle reasoning/thinking
     if (partType === "reasoning" || partType === "thinking") {
-      const text = typeof part['text'] === "string" ? part['text'] : "";
+      const text = typeof part["text"] === "string" ? part["text"] : "";
       if (text) {
         return {
           type: "thinking",
@@ -476,20 +517,23 @@ function parseSdkEvent(event: unknown): SdkEvent {
 
   // Handle session errors
   if (eventType === "session.error") {
-    const error = (props['error'] || {}) as Record<string, unknown>;
+    const error = (props["error"] || {}) as Record<string, unknown>;
     let errorMessage = "Unknown error";
 
     // Try to get message from error.data.message
-    if (typeof error['data'] === "object" && error['data'] !== null) {
-      const errorData = error['data'] as Record<string, unknown>;
-      if (typeof errorData['message'] === "string") {
-        errorMessage = errorData['message'];
+    if (typeof error["data"] === "object" && error["data"] !== null) {
+      const errorData = error["data"] as Record<string, unknown>;
+      if (typeof errorData["message"] === "string") {
+        errorMessage = errorData["message"];
       }
     }
 
     // Fall back to error.message if no data.message
-    if (errorMessage === "Unknown error" && typeof error['message'] === "string") {
-      errorMessage = error['message'];
+    if (
+      errorMessage === "Unknown error" &&
+      typeof error["message"] === "string"
+    ) {
+      errorMessage = error["message"];
     }
 
     return {
@@ -515,9 +559,7 @@ function parseSdkEvent(event: unknown): SdkEvent {
  * - content: Array of content parts
  * - Each part can be text, thinking, or tool
  */
-function extractOutputFromMessage(
-  message: unknown
-): string {
+function extractOutputFromMessage(message: unknown): string {
   if (!message || typeof message !== "object") {
     return "";
   }
@@ -526,29 +568,29 @@ function extractOutputFromMessage(
   const output: string[] = [];
 
   // Handle SDK response structure: { info: AssistantMessage, parts: Part[] }
-  if (Array.isArray(msg['parts'])) {
-    for (const part of msg['parts']) {
+  if (Array.isArray(msg["parts"])) {
+    for (const part of msg["parts"]) {
       if (typeof part === "object" && part !== null) {
         const partObj = part as Record<string, unknown>;
 
         // Text content
-        if (partObj['type'] === "text" && typeof partObj['text'] === "string") {
-          output.push(partObj['text']);
+        if (partObj["type"] === "text" && typeof partObj["text"] === "string") {
+          output.push(partObj["text"]);
         }
 
         // Thinking content (optional - can be included for debugging)
         if (
-          partObj['type'] === "thinking" &&
-          typeof partObj['thinking'] === "string"
+          partObj["type"] === "thinking" &&
+          typeof partObj["thinking"] === "string"
         ) {
-          output.push(`[Thinking: ${partObj['thinking']}]`);
+          output.push(`[Thinking: ${partObj["thinking"]}]`);
         }
 
         // Tool results (show summary)
-        if (partObj['type'] === "tool" && typeof partObj['tool'] === "string") {
-          const state = (partObj['state'] || {}) as Record<string, unknown>;
-          if (state['status'] === "completed") {
-            output.push(`[Tool ${partObj['tool']} executed]`);
+        if (partObj["type"] === "tool" && typeof partObj["tool"] === "string") {
+          const state = (partObj["state"] || {}) as Record<string, unknown>;
+          if (state["status"] === "completed") {
+            output.push(`[Tool ${partObj["tool"]} executed]`);
           }
         }
       }
@@ -556,29 +598,29 @@ function extractOutputFromMessage(
   }
 
   // Extract from content array (legacy format)
-  if (output.length === 0 && Array.isArray(msg['content'])) {
-    for (const part of msg['content']) {
+  if (output.length === 0 && Array.isArray(msg["content"])) {
+    for (const part of msg["content"]) {
       if (typeof part === "object" && part !== null) {
         const partObj = part as Record<string, unknown>;
 
         // Text content
-        if (partObj['type'] === "text" && typeof partObj['text'] === "string") {
-          output.push(partObj['text']);
+        if (partObj["type"] === "text" && typeof partObj["text"] === "string") {
+          output.push(partObj["text"]);
         }
 
         // Thinking content (optional - can be included for debugging)
         if (
-          partObj['type'] === "thinking" &&
-          typeof partObj['thinking'] === "string"
+          partObj["type"] === "thinking" &&
+          typeof partObj["thinking"] === "string"
         ) {
-          output.push(`[Thinking: ${partObj['thinking']}]`);
+          output.push(`[Thinking: ${partObj["thinking"]}]`);
         }
 
         // Tool results (show summary)
-        if (partObj['type'] === "tool" && typeof partObj['tool'] === "string") {
-          const state = (partObj['state'] || {}) as Record<string, unknown>;
-          if (state['status'] === "completed") {
-            output.push(`[Tool ${partObj['tool']} executed]`);
+        if (partObj["type"] === "tool" && typeof partObj["tool"] === "string") {
+          const state = (partObj["state"] || {}) as Record<string, unknown>;
+          if (state["status"] === "completed") {
+            output.push(`[Tool ${partObj["tool"]} executed]`);
           }
         }
       }
@@ -586,8 +628,8 @@ function extractOutputFromMessage(
   }
 
   // Fallback: try to extract from text field directly
-  if (output.length === 0 && typeof msg['text'] === "string") {
-    output.push(msg['text']);
+  if (output.length === 0 && typeof msg["text"] === "string") {
+    output.push(msg["text"]);
   }
 
   return output.join("\n");
@@ -600,7 +642,7 @@ function extractOutputFromMessage(
  * when a format schema was provided in the request.
  */
 function extractStructuredOutput(
-  message: unknown
+  message: unknown,
 ): StructuredOutput | undefined {
   if (!message || typeof message !== "object") {
     return undefined;
@@ -609,12 +651,12 @@ function extractStructuredOutput(
   const msg = message as Record<string, unknown>;
 
   // Navigate through the response structure: info.structured_output
-  const info = msg['info'] as Record<string, unknown> | undefined;
+  const info = msg["info"] as Record<string, unknown> | undefined;
   if (!info) {
     return undefined;
   }
 
-  const structuredOutput = info['structured_output'];
+  const structuredOutput = info["structured_output"];
   if (!structuredOutput || typeof structuredOutput !== "object") {
     return undefined;
   }
@@ -622,22 +664,22 @@ function extractStructuredOutput(
   const so = structuredOutput as Record<string, unknown>;
 
   // Validate the required 'completed' field
-  if (typeof so['completed'] !== "boolean") {
+  if (typeof so["completed"] !== "boolean") {
     return undefined;
   }
 
   // Build the structured output object
   const result: StructuredOutput = {
-    completed: so['completed'],
+    completed: so["completed"],
   };
 
   // Add optional fields if present
-  if (typeof so['reasoning'] === "string") {
-    result.reasoning = so['reasoning'];
+  if (typeof so["reasoning"] === "string") {
+    result.reasoning = so["reasoning"];
   }
 
-  if (typeof so['output'] === "string") {
-    result.output = so['output'];
+  if (typeof so["output"] === "string") {
+    result.output = so["output"];
   }
 
   return result;
@@ -649,9 +691,10 @@ function extractTokenUsage(message: unknown): TokenUsage | undefined {
   }
 
   const msg = message as Record<string, unknown>;
-  const info = msg["info"] && typeof msg["info"] === "object"
-    ? msg["info"] as Record<string, unknown>
-    : undefined;
+  const info =
+    msg["info"] && typeof msg["info"] === "object"
+      ? (msg["info"] as Record<string, unknown>)
+      : undefined;
 
   const candidates: Array<Record<string, unknown>> = [];
   if (msg["usage"] && typeof msg["usage"] === "object") {
@@ -680,7 +723,9 @@ function extractTokenUsage(message: unknown): TokenUsage | undefined {
   return undefined;
 }
 
-function parseTokenUsageRecord(record: Record<string, unknown>): TokenUsage | undefined {
+function parseTokenUsageRecord(
+  record: Record<string, unknown>,
+): TokenUsage | undefined {
   const inputTokens = pickNumber(record, [
     "inputTokens",
     "input_tokens",
@@ -703,7 +748,11 @@ function parseTokenUsageRecord(record: Record<string, unknown>): TokenUsage | un
     "tokens",
   ]);
 
-  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    totalTokens === undefined
+  ) {
     return undefined;
   }
 
@@ -723,7 +772,10 @@ function parseTokenUsageRecord(record: Record<string, unknown>): TokenUsage | un
   return usage;
 }
 
-function pickNumber(record: Record<string, unknown>, keys: string[]): number | undefined {
+function pickNumber(
+  record: Record<string, unknown>,
+  keys: string[],
+): number | undefined {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "number" && Number.isFinite(value)) {

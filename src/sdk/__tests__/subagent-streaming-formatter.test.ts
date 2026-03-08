@@ -448,16 +448,4 @@ describe("SubagentStreamingFormatter", () => {
   });
 });
 
-// Verification console output
-console.log("SubagentStreamingFormatter tests loaded successfully");
-console.log("Test coverage:");
-console.log("  - Basic single line output");
-console.log("  - Multi-line output");
-console.log("  - Consecutive newlines");
-console.log("  - Edge cases (empty, whitespace, etc.)");
-console.log("  - Depth/indentation");
-console.log("  - Reset functionality");
-console.log("  - Flush functionality");
-console.log("  - Integration scenarios");
-console.log("  - State isolation");
-console.log("\nRun with: bun test src/sdk/__tests__/subagent-streaming-formatter.test.ts");
+

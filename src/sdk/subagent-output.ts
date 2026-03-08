@@ -3,47 +3,24 @@
  *
  * Utilities for formatting subagent output with proper indentation,
  * coloring, and prefixing for hierarchical display.
+ *
+ * Re-exports identity helpers for backward compatibility.
  */
 
 import type { SubagentInfo } from "./subagent-types.js";
+import {
+  GRAY,
+  RESET,
+  getIndent,
+  getSubagentPrefix,
+  formatSubagentStart as formatSubagentStartShared,
+  formatSubagentEnd as formatSubagentEndShared,
+} from "./subagent-format.js";
 
-/**
- * ANSI escape codes for text formatting.
- */
-export const GRAY = "\x1b[90m";
-export const RESET = "\x1b[0m";
+// Re-export identity helper for backward compatibility
+export { generateShortId } from "./subagent-identity.js";
 
-/**
- * Generate a short ID from a full session ID.
- *
- * Extracts the last 6 characters of the session ID and converts to lowercase.
- * Useful for creating compact, readable identifiers for display.
- *
- * @param sessionId - The full session ID from the SDK
- * @returns Lowercase 6-character short ID
- * @example
- * generateShortId("sess-abc123-def456"); // Returns "ef456"
- * generateShortId("ABC-DEF-GHI"); // Returns "f-ghi"
- */
-export function generateShortId(sessionId: string): string {
-  if (!sessionId || sessionId.length === 0) {
-    return "";
-  }
-  const lastSix = sessionId.slice(-6);
-  return lastSix.toLowerCase();
-}
-
-/**
- * Generate indentation string based on subagent depth.
- *
- * Each depth level adds 2 spaces of indentation.
- *
- * @param depth - Nesting depth (1 = direct child, 2+ = nested)
- * @returns Indentation string with appropriate spaces
- */
-function getIndent(depth: number): string {
-  return " ".repeat(depth * 2);
-}
+export { GRAY, RESET };
 
 /**
  * Format subagent output content with proper prefix and styling.
@@ -73,7 +50,7 @@ export function formatSubagentOutput(info: SubagentInfo, content: string): strin
   }
 
   const indent = getIndent(info.depth);
-  const prefix = `subagent ${info.agentName}@${info.shortId}: `;
+  const prefix = getSubagentPrefix(info);
 
   // Split content into lines and format each
   const lines = content.split("\n");
@@ -103,8 +80,7 @@ export function formatSubagentOutput(info: SubagentInfo, content: string): strin
  * // Returns: "\x1b[90m  ↳ subagent explore@ef456 started\x1b[0m"
  */
 export function formatSubagentStart(info: SubagentInfo): string {
-  const indent = getIndent(info.depth);
-  return `${GRAY}${indent}↳ subagent ${info.agentName}@${info.shortId} started${RESET}`;
+  return formatSubagentStartShared(info);
 }
 
 /**
@@ -125,9 +101,5 @@ export function formatSubagentStart(info: SubagentInfo): string {
  * // Returns: "\x1b[90m  ✗ subagent explore@ef456 error\x1b[0m"
  */
 export function formatSubagentEnd(info: SubagentInfo): string {
-  const indent = getIndent(info.depth);
-  const symbol = info.status === "error" ? "✗" : "✓";
-  const statusText = info.status === "error" ? "error" : "completed";
-
-  return `${GRAY}${indent}${symbol} subagent ${info.agentName}@${info.shortId} ${statusText}${RESET}`;
+  return formatSubagentEndShared(info);
 }
