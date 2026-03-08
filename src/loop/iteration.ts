@@ -24,6 +24,7 @@ export interface SdkIterationOptions {
   agent?: string;
   streamOutput: boolean;
   compactTools: boolean;
+  debugEvents?: boolean;
   silent?: boolean;
   useStructuredOutput?: boolean;
 }
@@ -38,7 +39,7 @@ export interface SdkIterationResult {
 }
 
 export async function executeSdkIteration(options: SdkIterationOptions): Promise<SdkIterationResult> {
-  const { client, prompt, model, agent, streamOutput, compactTools, silent, useStructuredOutput } = options;
+  const { client, prompt, model, agent, streamOutput, compactTools, debugEvents, silent, useStructuredOutput } = options;
 
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
@@ -173,6 +174,7 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
       agent,
       {
         sessionId,
+        ...(debugEvents !== undefined && { debugEvents }),
         onEvent: (event) => {
           // Update event tracking for contextual heartbeat
           lastEventType = event.type;

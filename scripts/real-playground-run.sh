@@ -99,11 +99,13 @@ if [[ "$MODE" == "init" ]]; then
   echo
   echo "Init-only mode. To run Ralph:"
   echo "  cd $SESSION_DIR"
-  echo "  bun run $REPO_ROOT/ralph.ts \"Read TASK.md and complete it. Run bun test. Output <promise>COMPLETE</promise> when done.\" --max-iterations 8 --no-commit"
+  echo "  RALPH_DEBUG_EVENTS=1 RALPH_LOG_LEVEL=DEBUG bun run $REPO_ROOT/ralph.ts \\"Read TASK.md and complete it. Run bun test. Output <promise>COMPLETE</promise> when done.\\" --max-iterations 8 --no-commit --debug-events --log-level DEBUG"
   exit 0
 fi
 
 RALPH_ARGS=(
+  "--debug-events"
+  "--log-level DEBUG"
   "-f"
   "$SESSION_DIR/TASK.md"
   "--max-iterations" "1"

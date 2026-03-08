@@ -11,6 +11,8 @@ import type {
   StructuredOutput,
   StructuredOutputSchema,
 } from "../executor";
+import { executePrompt } from "../executor";
+import { configureLogger } from "../../logger";
 
 // Default JSON schema for structured output completion detection
 const DEFAULT_STRUCTURED_OUTPUT_SCHEMA: StructuredOutputSchema = {
@@ -347,6 +349,64 @@ describe("Execution Result with Structured Output", () => {
     expect(result.structuredOutput).toBeDefined();
     expect(result.structuredOutput?.completed).toBe(false);
     expect(result.success).toBe(false);
+  });
+});
+
+describe("Debug event logging", () => {
+  test("logs raw SDK events through the shared logger when enabled", async () => {
+    const logs: string[] = [];
+    const originalConsoleLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    };
+
+    configureLogger({ level: "DEBUG", structured: false });
+
+    const client = {
+      session: {
+        create: async () => ({ data: { id: "session-1" } }),
+        prompt: async () => ({
+          data: {
+            parts: [{ type: "text", text: "done" }],
+            info: {
+              structured_output: {
+                completed: true,
+              },
+            },
+          },
+        }),
+      },
+      event: {
+        subscribe: async () => ({
+          stream: (async function* () {
+            yield {
+              type: "message.part.delta",
+              properties: {
+                field: "text",
+                delta: "hello",
+              },
+            };
+            yield {
+              type: "session.idle",
+              properties: {},
+            };
+          })(),
+        }),
+      },
+    };
+
+    try {
+      await executePrompt(client as never, "test prompt", undefined, undefined, {
+        debugEvents: true,
+      });
+    } finally {
+      console.log = originalConsoleLog;
+      configureLogger({ level: "INFO", structured: false });
+    }
+
+    expect(logs.some((line) => line.includes("[sdk-event] message.part.delta"))).toBe(true);
+    expect(logs.some((line) => line.includes('"delta":"hello"'))).toBe(true);
+    expect(logs.some((line) => line.includes("[sdk-event] session.idle"))).toBe(true);
   });
 });
 

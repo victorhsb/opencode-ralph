@@ -82,6 +82,7 @@ export interface LoopOptions {
   autoCommit: boolean;
   disablePlugins: boolean;
   allowAllPermissions: boolean;
+  debugEvents?: boolean;
   silent?: boolean;
   agent?: string;
   sdkClient: SdkClient;
@@ -119,6 +120,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
     verboseTools,
     autoCommit,
     allowAllPermissions,
+    debugEvents,
     silent,
     agent,
     sdkClient,
@@ -302,6 +304,7 @@ export async function runRalphLoop(options: LoopOptions): Promise<void> {
         streamOutput,
         compactTools: !verboseTools,
         useStructuredOutput: true,
+        ...(debugEvents !== undefined && { debugEvents }),
         ...(agent !== undefined && { agent }),
         ...(silent !== undefined && { silent }),
       });

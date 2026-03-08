@@ -46,6 +46,8 @@ export interface ExecutionResult {
 export interface ExecutionOptions {
   /** Optional callback for real-time event display */
   onEvent?: (event: SdkEvent) => void;
+  /** Log every raw SDK event via the shared logger */
+  debugEvents?: boolean;
   /** Optional abort signal for cancellation */
   signal?: AbortSignal;
   /** JSON schema format for structured output (enables structured output when provided) */
@@ -137,7 +139,7 @@ export async function executePrompt(
   agent: string | undefined, // agent to use
   options: ExecutionOptions,
 ): Promise<ExecutionResult> {
-  const { onEvent, signal, format, sessionId: existingSessionId } = options;
+  const { onEvent, debugEvents, signal, format, sessionId: existingSessionId } = options;
 
   const toolCounts = new Map<string, number>();
   const errors: string[] = [];
@@ -199,9 +201,8 @@ export async function executePrompt(
             sessionComplete = true;
           }
 
-          // Debug logging for all raw events (only stringify when debug is enabled)
-          if (process.env["RALPH_DEBUG_EVENTS"] === "1") {
-            logEventDebug(rawEventType ?? "unknown", JSON.stringify(event));
+          if (shouldDebugEvents(debugEvents)) {
+            logEventDebug(rawEventType ?? "unknown", event);
           }
 
           const sdkEvent = parseSdkEvent(event);
@@ -352,16 +353,25 @@ export async function executePrompt(
 }
 
 /**
- * Log event debug information when RALPH_DEBUG_EVENTS=1.
- * Logs to stderr to avoid polluting stdout.
+ * Log raw SDK event information through the shared logger.
+ * The log-level still controls whether DEBUG lines are emitted.
  */
-function logEventDebug(eventType: string, content: string): void {
-  if (process.env["RALPH_DEBUG_EVENTS"] !== "1") return;
-  const timestamp = new Date().toISOString();
+function logEventDebug(eventType: string, event: unknown): void {
+  const content = safeStringifyEvent(event);
   const size = Buffer.byteLength(content, "utf8");
-  process.stderr.write(
-    `[DEBUG] [${timestamp}] Event: ${eventType} | Size: ${size} bytes\n`,
-  );
+  logger.debug(`[sdk-event] ${eventType} (${size} bytes) ${content}`);
+}
+
+function shouldDebugEvents(debugEvents: boolean | undefined): boolean {
+  return debugEvents === true || process.env["RALPH_DEBUG_EVENTS"] === "1";
+}
+
+function safeStringifyEvent(event: unknown): string {
+  try {
+    return JSON.stringify(event);
+  } catch {
+    return String(event);
+  }
 }
 
 /**

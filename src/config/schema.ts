@@ -24,6 +24,7 @@ export const ConfigSchema = z.object({
   commit: z.boolean().optional(),
   plugins: z.boolean().optional(),
   allowAll: z.boolean().optional(),
+  debugEvents: z.boolean().optional(),
   silent: z.boolean().optional(),
   verify: z.array(z.string().min(1)).optional(),
   verifyMode: z.enum(["on-claim", "every-iteration"]).optional(),

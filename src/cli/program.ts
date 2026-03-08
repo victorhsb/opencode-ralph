@@ -66,6 +66,7 @@ function configureProgram(program: Command): Command {
     .option("--no-plugins", "Disable non-auth OpenCode plugins for this run")
     .option("--allow-all", "Auto-approve all tool permissions")
     .option("--no-allow-all", "Require interactive permission prompts")
+    .option("--debug-events", "Log all SDK events for debugging")
     .option("--silent", "Suppress tool execution details and other descriptive output")
     .option("--verify <cmd>", "Verification command to run after iterations (repeatable)", collectRepeated, [])
     .option("--verify-mode <mode>", "Verification trigger mode: on-claim|every-iteration", "on-claim")

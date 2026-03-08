@@ -7,7 +7,12 @@
  */
 
 import type { SubagentInfo } from "./subagent-types.js";
-import { GRAY, RESET, getIndent, getSubagentPrefix } from "./subagent-format.js";
+import {
+  GRAY,
+  RESET,
+  getIndent,
+  getSubagentPrefix,
+} from "./subagent-format.js";
 
 /**
  * Formatter for streaming subagent output chunks.
@@ -85,7 +90,11 @@ export class SubagentStreamingFormatter {
    * @param isLastLine - Whether this is the final line in the chunk
    * @param output - Array to append formatted output to
    */
-  private formatLine(line: string, isLastLine: boolean, output: string[]): void {
+  private formatLine(
+    line: string,
+    isLastLine: boolean,
+    output: string[],
+  ): void {
     if (this.isAtLineStart) {
       this.formatLineStart(line, output);
     } else {

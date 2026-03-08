@@ -55,6 +55,7 @@ export interface MainCommandOptions {
   plugins: boolean;
   allowAll: boolean;
   allowAllExplicit: boolean;
+  debugEvents: boolean;
   silent: boolean;
   dryRun: boolean;
   verify?: string[];
@@ -202,6 +203,7 @@ function mergeOptionsWithConfig(
     "commit",
     "plugins",
     "allowAll",
+    "debugEvents",
     "silent",
     "verify",
     "verifyMode",
@@ -372,6 +374,7 @@ async function executeMainWorkflow(opts: MainCommandOptions, prompt: string): Pr
       autoCommit: opts.commit,
       disablePlugins: !opts.plugins,
       allowAllPermissions,
+      debugEvents: opts.debugEvents ?? false,
       silent: opts.silent,
       sdkClient,
       verificationCommands: verification.commands,

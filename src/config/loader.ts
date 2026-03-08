@@ -33,6 +33,7 @@ const DEFAULT_CONFIG: Config = {
   commit: true,
   plugins: true,
   allowAll: true,
+  debugEvents: false,
   silent: false,
   verifyMode: "on-claim",
   verifyTimeoutMs: 300000,
