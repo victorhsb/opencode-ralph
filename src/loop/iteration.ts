@@ -8,10 +8,10 @@ import { executePrompt } from "../sdk/executor.js";
 import { formatToolResult } from "../sdk/output.js";
 import { SubagentMonitor } from "../sdk/subagent-monitor.js";
 import {
-  formatSubagentOutput,
   formatSubagentStart,
   formatSubagentEnd,
 } from "../sdk/subagent-output.js";
+import { SubagentStreamingFormatter } from "../sdk/subagent-streaming-formatter.js";
 import type { SdkClient } from "../sdk/client.js";
 import type { StructuredOutput, TokenUsage } from "../sdk/executor.js";
 import type { SubagentInfo } from "../sdk/subagent-types.js";
@@ -116,6 +116,7 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
 
   let subagentMonitor: SubagentMonitor | undefined;
   let sessionId: string | undefined;
+  const subagentFormatters = new Map<string, SubagentStreamingFormatter>();
 
   try {
     // Create session first so we can monitor it for subagents
@@ -143,16 +144,21 @@ export async function executeSdkIteration(options: SdkIterationOptions): Promise
       onSubagentStarted: (info: SubagentInfo) => {
         if (!silent) {
           console.log(formatSubagentStart(info));
+          subagentFormatters.set(info.sessionId, new SubagentStreamingFormatter(info));
         }
       },
       onSubagentEvent: (subagentEvent) => {
         if (!silent && subagentEvent.event.type === "text" && subagentEvent.event.content) {
-          process.stdout.write(formatSubagentOutput(subagentEvent.subagent, subagentEvent.event.content));
+          const formatter = subagentFormatters.get(subagentEvent.subagent.sessionId);
+          if (formatter) {
+            process.stdout.write(formatter.formatChunk(subagentEvent.event.content));
+          }
         }
       },
       onSubagentCompleted: (info: SubagentInfo) => {
         if (!silent) {
           console.log(formatSubagentEnd(info));
+          subagentFormatters.delete(info.sessionId);
         }
       },
     });
