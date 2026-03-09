@@ -2,6 +2,8 @@
 
 This document tracks potential improvements to Open Ralph Wiggum, organized by priority and category. The codebase is already well-structured with good separation of concerns and clear documentation—these suggestions focus on maintainability, robustness, and production-readiness.
 
+Last substantive review: **2026-03-08** — expanded from framework deep-dive analysis comparing Open Ralph Wiggum against the canonical Ralph Wiggum technique and community implementations.
+
 ## Deferred From Report-Driven MVP Reliability Plan (Explicitly Out of Scope for First Execution)
 
 This section captures items we intentionally postponed while scoping the first implementation wave around **MVP reliability**, with **verification/backpressure** as the primary theme.
@@ -96,14 +98,61 @@ These are not dropped. They are deferred so the first iteration can focus on nat
 
 ### Follow-Up Backlog (Recommended Order After MVP)
 
-1. **Phase 2: Stronger Backpressure Policies**
-   Add named verification steps, optional/required checks, failure streak policies, and more precise triggers.
+#### Phase 2: Stronger Backpressure Policies
 
-2. **Phase 3: Supervisor Upgrade**
-   Expand supervisor output schema beyond suggestions into structured decisions and add risk-based pause/escalation.
+Add named verification steps, optional/required checks, failure streak policies, and more precise triggers.
 
-3. **Phase 4: Config + Budgets**
-   Introduce persistent config for verification/policies and add cost/time/token budget enforcement.
+Concrete items:
+- Named verification steps (`--verify-step <name>::<cmd>`) for per-step labeling in output and history
+- Required vs optional checks: failure in optional steps logs but does not block completion
+- Failure streak policy: pause or abort after N consecutive verification failures (configurable via `--max-verify-failures`)
+- Per-step timeout overrides, not just a global timeout
+- Rich log export: write full verification stdout/stderr to `.ralph/verify-<iteration>.log` for post-mortem
+- Trigger granularity: add `on-task-completion` as a third mode (run verification only on `taskPromise` detection)
+
+#### Phase 3: Supervisor Upgrade — Active Judge Role
+
+The current supervisor is suggestion-based (`add_task` / `add_context`) with user approval. The target architecture, based on mature Ralph community implementations, is a two-tier system:
+
+**Tier 1 — Passive suggestion (current):** Supervisor observes, proposes changes, waits for user. Preserved for interactive use cases.
+
+**Tier 2 — Active judge (target):** Supervisor runs as a non-destructive read-only agent after each iteration and issues a structured decision that the loop respects without human input. Inspired by the Vercel Labs three-agent model (Coding Agent / Judge Agent / Interviewer Agent).
+
+Structured decision schema:
+```typescript
+type SupervisorDecision =
+  | { action: "CONTINUE"; reason: string }
+  | { action: "STOP_SUCCESS"; reason: string }
+  | { action: "STOP_FAILED"; reason: string }
+  | { action: "ESCALATE"; reason: string; hintForNextIteration: string }
+  | { action: "ROLLBACK"; reason: string; targetCommit?: string };
+```
+
+Items to implement:
+- New flag `--supervisor-mode <passive|active>` to opt into active-judge tier
+- Supervisor in active mode: read-only tools only (no file writes, no state mutation)
+- Loop consults supervisor decision before honoring `shouldComplete`
+- `ESCALATE` action: supervisor injects `hintForNextIteration` as context for next iteration, overrides completion
+- Risk scoring: detect scope drift (agent touching files outside declared task domain), security-sensitive file modifications, and test-count regression
+- Separate `--supervisor-judge-model` flag — judge should use a different (potentially heavier) model than the coding agent
+
+**LLM-as-Judge for subjective criteria** (distinct from structural judge):
+- Support a `verify-llm.ts` fixture pattern: files in `.ralph/llm-checks/` define binary pass/fail prompts for subjective quality
+- Ralph discovers these during orientation and runs them as part of backpressure
+- Ordering rule enforced: LLM checks run only after all deterministic verification steps pass
+
+#### Phase 4: Config + Budgets
+
+Introduce persistent config for verification/policies and add cost/time/token budget enforcement.
+
+Items:
+- `.ralphrc.json` in project root and `~/.config/ralph/config.json` as user-level defaults
+- `ralph.config.ts` for typed configuration with IDE autocomplete
+- Precedence: CLI flags > project config > user config > compiled defaults
+- Token budget tracking per-iteration and per-run (SDK already exposes usage data in `sdkResult.tokenUsage`)
+- Cost estimation: map token counts to cost using model pricing table in `src/config/`
+- Time budget: `--max-total-runtime-minutes N` hard stop after wall-clock threshold
+- Budget-aware strategy: when N% of token budget is consumed, log a warning; at limit, pause and prompt user
 
 ### Scope Decisions Captured (For Future Reference)
 
@@ -167,8 +216,8 @@ Implemented comprehensive TypeScript strict mode configuration. Fixed 316 type e
 
 ### 2. Dependency Version Pinning
 
-**Status:** Not started  
-**Impact:** Medium - Prevents unexpected breakages  
+**Status:** Not started
+**Impact:** Medium - Prevents unexpected breakages
 **Effort:** Low
 
 **Current State:**
@@ -185,7 +234,7 @@ The original `^0.x` concern is no longer applicable because the project is now o
 
 ---
 
-### 2. State File Validation
+### 3. State File Validation
 
 **Status:** Partial (baseline done; versioned migrations remain)  
 **Impact:** High - Prevents crashes from corrupted state  
@@ -213,7 +262,72 @@ const StateSchema = z.object({
 
 ## Medium Priority
 
-### 3. Testing Strategy Expansion
+### 4. Active Behavioral Circuit Breakers
+
+**Status:** Not started
+**Impact:** High — prevents runaway loops that burn API credits on genuine stagnation
+**Effort:** Low
+
+**Current State:** `struggleIndicators` in `loop.ts` detects stagnation (3+ iterations without file changes, 3+ very short iterations) but only prints a warning. The loop continues unconditionally.
+
+**Gap vs. framework:** The deep-dive analysis and community implementations (e.g., `frankbria/ralph-claude-code`) describe hard circuit breakers that stop the loop when stagnation is confirmed — not just advisory notices. The current behavior is friendly but expensive: a stuck loop can silently consume $50+ before a user notices.
+
+**Action Items:**
+- [ ] Add `--max-no-progress-iterations <N>` flag: abort loop when `noProgressIterations >= N` (suggested default: 5)
+- [ ] Add `--max-short-iterations <N>` flag: abort when `shortIterations >= N` (suggested default: 5)
+- [ ] Add `--max-repeated-error-streak <N>` flag: abort when same error key appears N times consecutively
+- [ ] On circuit-breaker abort, print a clear summary: which indicator triggered, how many iterations were spent, the last error/state seen
+- [ ] Exit with a distinct exit code (e.g., `2`) so CI/scripts can distinguish "max-iterations" from "stagnation abort"
+- [ ] Add `--circuit-breaker-action <abort|pause>` option: `pause` writes a context hint and waits for user input instead of aborting
+- [ ] Test: add test for stagnation-triggered abort path in loop integration tests
+
+---
+
+### 5. Planning Mode / Building Mode Explicit Support
+
+**Status:** Not started
+**Impact:** High — the most common Ralph pattern in the wild involves two distinct phases; without explicit support, users improvise around it
+**Effort:** Medium
+
+**Background:** The canonical Ralph technique defines three phases: (1) human-LLM conversation to define specs, (2) planning mode where the agent does a gap analysis and produces `IMPLEMENTATION_PLAN.md`, (3) building mode where each iteration picks one task, implements it, and exits. Open Ralph Wiggum currently only has the building mode concept (tasks mode) but no planning phase.
+
+**Current workaround:** Users must manually craft a planning prompt and run a separate `ralph` invocation before switching to building mode. The two phases share no convention.
+
+**Action Items:**
+- [ ] Add `ralph plan` subcommand (or `--mode plan` flag): runs a single non-looping OpenCode session with a planning-specific prompt template
+- [ ] Planning mode default prompt: read specs from `specs/*.md` (or `PROMPT.md`), inspect codebase, write a prioritized `IMPLEMENTATION_PLAN.md`; exit on first completion
+- [ ] After planning mode exits, print "Run `ralph run` to start the build loop" guidance
+- [ ] Add `--specs-dir <path>` flag to point both planning and building modes at a specs directory (default: `specs/`)
+- [ ] Update `ralph init` to scaffold the full project structure (see item below)
+- [ ] Document the two-phase workflow clearly in README with a worked example
+
+---
+
+### 6. Enhanced `ralph init` Scaffolding
+
+**Status:** Partial — current init creates only `.ralph/tasks.md` and `.ralph/context.md`
+**Impact:** High — first-run experience; users coming from the deep-dive docs expect the canonical project structure
+**Effort:** Low
+
+**Current State:** `init.ts` creates `.ralph/tasks.md`, `.ralph/context.md`, installs two OpenCode skills, and updates `.gitignore`. It does not create the project-level files that constitute the "full Ralph setup" described in the framework.
+
+**Missing files:**
+- `PROMPT.md` — the per-iteration prompt fed to the agent (critical; without it, users must pass `--prompt-file` every time)
+- `AGENTS.md` — operational notes the agent self-maintains across iterations
+- `specs/` directory — one Markdown file per topic of concern; the source of truth for what should be built
+- `IMPLEMENTATION_PLAN.md` — disposable coordination state; gap between specs and code
+
+**Action Items:**
+- [ ] Create `PROMPT.md` stub at project root with placeholder instructions and instructions to run `ralph plan` first
+- [ ] Create `AGENTS.md` stub with codebase identity section and a build/test commands placeholder
+- [ ] Create `specs/` directory with a `specs/example.md` stub explaining the one-sentence-per-topic rule
+- [ ] Create `IMPLEMENTATION_PLAN.md` stub noting it should be generated by `ralph plan`
+- [ ] Add `--minimal` flag to init that only creates `.ralph/` (current behavior) for users who want bare-bones setup
+- [ ] Print a "your next steps" onboarding block after init that explains the full workflow end-to-end
+
+---
+
+### 7. Testing Strategy Expansion
 
 **Status:** Partial (broad unit coverage exists; loop/error-path gaps remain)  
 **Impact:** High - Confidence for refactoring  
@@ -237,7 +351,7 @@ const StateSchema = z.object({
 
 ---
 
-### 4. Structured Error Handling
+### 8. Structured Error Handling
 
 **Status:** Not started  
 **Impact:** Medium - Better UX and debugging  
@@ -281,7 +395,7 @@ export class StateCorruptedError extends RalphError {
 
 ---
 
-### 5. Configuration File Support
+### 9. Configuration File Support
 
 **Status:** Not started  
 **Impact:** Medium - Improved UX for regular users  
@@ -315,7 +429,7 @@ Currently all configuration is via CLI arguments. Users would benefit from persi
 
 ## Lower Priority
 
-### 6. Logging Infrastructure
+### 10. Logging Infrastructure
 
 **Status:** Not started  
 **Impact:** Medium - Better debugging  
@@ -342,22 +456,27 @@ logger.warn("No file changes detected", { iteration: state.iteration });
 
 ---
 
-### 7. Performance Monitoring
+### 11. Performance Monitoring and Context Window Visibility
 
-**Status:** Partial (basic duration tracking)  
-**Impact:** Low - Operational insight  
+**Status:** Partial (basic duration tracking; `PerformanceTracker` exists but token/cost data is partial)
+**Impact:** Medium — operational insight and quality signal; context degradation past 60% utilization is real and currently invisible
 **Effort:** Medium
 
+**Background:** The deep-dive analysis cites 40–60% context window utilization as the "smart zone". Past 60%, LLM reasoning quality degrades measurably. Open Ralph Wiggum currently has `PerformanceTracker` in `src/performance/tracker.ts` and `sdkResult.tokenUsage` piped through the iteration, but utilization percentages are not surfaced to the user.
+
 **Action Items:**
-- [ ] Track token usage per iteration (if SDK exposes it)
-- [ ] Monitor memory usage over long runs
-- [ ] Add cost estimation per iteration
-- [ ] Identify bottlenecks (waiting vs executing time)
-- [ ] Export metrics in Prometheus format (optional)
+- [ ] Surface context window utilization % per iteration in the iteration summary line (e.g., `ctx: 42%`)
+- [ ] Add a configurable warning threshold: `--ctx-warn-pct 60` prints a yellow warning when utilization exceeds threshold
+- [ ] Track token usage per iteration in `IterationHistory` (field exists but may not be populated consistently)
+- [ ] Monitor process memory usage over long runs (Bun: `process.memoryUsage()`)
+- [ ] Add cost estimation per iteration using model pricing table in `src/config/`
+- [ ] Identify waiting-vs-executing time (SDK round-trip latency vs actual compute)
+- [ ] Export metrics in structured JSON to `.ralph/metrics.json` for post-run analysis
+- [ ] Export metrics in Prometheus format (optional, behind `--metrics-format prometheus`)
 
 ---
 
-### 8. State Management Improvements
+### 12. State Management Improvements
 
 **Status:** Not started  
 **Impact:** Low - Better long-term reliability  
@@ -375,7 +494,7 @@ Currently uses JSON files in `.ralph/` for state.
 
 ---
 
-### 9. Code Organization Refinements
+### 13. Code Organization Refinements
 
 **Status:** Not started  
 **Impact:** Low - Maintainability  
@@ -403,7 +522,7 @@ const commands = new Map([
 
 ---
 
-### 10. Documentation Improvements
+### 14. Documentation Improvements
 
 **Status:** Partial (good README)  
 **Impact:** Low - Developer experience  
@@ -420,7 +539,7 @@ const commands = new Map([
 
 ---
 
-### 11. CI/CD Pipeline
+### 15. CI/CD Pipeline
 
 **Status:** Partial (GitHub Actions workflow exists for bot)  
 **Impact:** High - Quality assurance  
@@ -469,6 +588,7 @@ jobs:
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-02-23 | Refresh improvement plan statuses and assumptions | The document had drifted behind the codebase and marked completed work as "Not started" |
+| 2026-03-08 | Expand plan with framework deep-dive gaps | Compared Open Ralph Wiggum against canonical Ralph technique and community implementations; identified four missing areas: active circuit breakers, planning mode, init scaffolding, context window visibility. Renumbered items to fix duplicate "2." entries. Expanded Phase 2/3/4 deferred backlogs with concrete schemas and flag designs. |
 
 ---
 
