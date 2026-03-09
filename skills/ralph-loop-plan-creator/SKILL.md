@@ -1,6 +1,6 @@
 ---
 name: ralph-loop-plan-creator
-description: "Create planning-mode artifacts for Ralph loops implementing complex features or MVPs. Creates master plans and phase-specific plans that minimize context per iteration. Does NOT execute Ralph CLI commands - delegates all CLI operations to ralph-cli-manager skill. Use when breaking work into dependency-ordered phases with clear verification gates."
+description: "Create planning-mode artifacts for Ralph loops implementing complex features or MVPs. Creates master plans and phase-specific plans that minimize context per iteration. Use when breaking work into dependency-ordered phases with clear verification gates."
 ---
 
 # Ralph Loop Plan Creator
@@ -14,14 +14,9 @@ Produce one task-scoped phase plan per task and one master plan that controls ph
 
 This skill creates planning artifacts but **must delegate ALL Ralph CLI operations to the ralph-cli-manager skill**.
 
-**When you need to:**
-- Initialize Ralph (`ralph init`)
-- Add/remove/list tasks (`ralph task add/remove/list`)
-- Edit `.ralph/ralph-tasks.md` files
-- Check Ralph status (`ralph --status`)
-- Any other Ralph CLI interaction
+**When you need to:** initialize Ralph, add/remove/list tasks, edit `.ralph/ralph-tasks.md`, check status, or any other Ralph CLI interaction.
 
-**STOP and load the ralph-cli-manager skill first.** It provides critical safety guidelines and proper command patterns.
+**Load the ralph-cli-manager skill first.** It provides critical safety guidelines and proper command patterns.
 
 **Your role in this skill:**
 - ✅ Create planning files (`plans/*.md`)
@@ -31,21 +26,20 @@ This skill creates planning artifacts but **must delegate ALL Ralph CLI operatio
 
 ### What Ralph Already Handles (Don't Redefine)
 
-Ralph's default prompt template already manages iteration mechanics. Do NOT include these in phase plans:
+Ralph manages iteration mechanics automatically. Do NOT include these in phase plans:
+- Output format (`completed`, `reasoning`, `output` JSON fields)
+- Completion signaling (when to set `completed: true`, promise tags)
+- Iteration tracking (current iteration, bounds, progress)
+- Task mode behavior ("work on one task at a time", task progression)
+- Critical rules ("don't lie about completion", "check work first")
 
-- **Output format**: Ralph instructs agents to use `completed`, `reasoning`, and `output` JSON fields
-- **Completion signaling**: Ralph defines when to set `completed: true` and how promise tags work
-- **Iteration tracking**: Ralph provides current iteration, max/min bounds, and progress context
-- **Task mode behavior**: Ralph handles "work on one task at a time" and task list progression
-- **Critical rules**: Ralph already covers "don't lie about completion", "check work first", etc.
-
-Phase plans should focus ONLY on domain-specific work: what to build, files to modify, and phase-specific verification.
+Phase plans focus ONLY on domain-specific work: what to build, files to modify, and phase-specific verification.
 
 ## Required Outputs
 
 Create these files unless the repository already has an equivalent convention:
 - `plans/master-plan.md`
-- `plans/phase-01-plan.md` through `plans/phase-NN-plan.md` (one file per phase and one phase per task)
+- `plans/phase-01-plan.md` through `plans/phase-NN-plan.md` (one file per phase; one phase = one Ralph task)
 - Optional supporting docs in `plans/references/` only when needed
 
 Ensure every phase file can run mostly independently and only includes context needed for that phase.
@@ -125,7 +119,7 @@ This skill creates planning artifacts but must NOT execute Ralph commands direct
 **Workflow:**
 1. Load ralph-cli-manager skill first
 2. Follow its guidance for all CLI operations
-3. Use `references/task-sync-with-ralph-cli-manager.md` for this skill's specific sync patterns
+3. Use this skill's `references/task-sync-with-ralph-cli-manager.md` for sync patterns
 
 Minimum standards:
 - ensure `.ralph/` exists (`ralph init` if missing)
